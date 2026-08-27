@@ -97,6 +97,7 @@ public:
         DistractionFreeMode,
         Preview,
         HemingwayMode,
+        BlindDraftMode,
         DarkMode,
         ShowMenubar,
         ShowStatusbar,

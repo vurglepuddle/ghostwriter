@@ -5,6 +5,7 @@
 <!--
 SPDX-FileCopyrightText: 2022 Carl Schwan <carl@carlschwan.eu>
 SPDX-FileCopyrightText: 2022 Megan Conkle <megan.conkle@kdemail.net>
+SPDX-FileCopyrightText: 2026 ghostwriter contributors
 SPDX-License-Identifier: CC-BY-SA-4.0
 -->
 
@@ -48,11 +49,20 @@ SPDX-License-Identifier: CC-BY-SA-4.0
     to concentrate on just one or more lines.
   </para>
   <para>
+    Blind Draft Mode (<keycombo action="simul">&Ctrl;&Shift;<keycap>B</keycap></keycombo>)
+    hides and locks every document line except the current line while drafting.
+    Pressing Enter commits the current line, and the full document is restored
+    when Blind Draft Mode is turned off.
+  </para>
+  <para>
     A live HTML preview allows you to view the final formatting as you type.
     HTML preview and export options are provided by the built-in Markdown processor,
     cmark-gfm; but you may add more by installing Pandoc, MultiMarkdown,
     or cmark processors. The application will automatically detect their
     installation if their locations are in the system's PATH environment variable.
+    External images and media are blocked by default. A warning in the preview
+    can load them temporarily for the current document; scripts, frames, and
+    other active content remain blocked.
   </para>
 </refsect1>
 

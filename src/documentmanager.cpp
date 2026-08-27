@@ -390,7 +390,7 @@ void DocumentManager::openFileAt(const Bookmark &location, bool omitFromHistory)
                 //
                 return;
             } else if (oldFilePath == d->document->filePath()) {
-                d->editor->navigateDocument(oldCursorPosition);
+                d->editor->navigateDocumentForLoad(oldCursorPosition);
             }
 
             if (d->restoreSessionEnabled) {
@@ -446,7 +446,7 @@ void DocumentManager::reload()
         if (d->loadFile(filePath)) {
             QTextCursor cursor = d->editor->textCursor();
             cursor.setPosition(pos);
-            d->editor->setTextCursor(cursor);
+            d->editor->navigateDocumentForLoad(cursor.position());
         }
     }
 }
@@ -590,7 +590,7 @@ bool DocumentManager::close()
         //
         QTextCursor cursor(d->document);
         cursor.setPosition(0);
-        d->editor->setTextCursor(cursor);
+        d->editor->navigateDocumentForLoad(cursor.position());
 
         d->document->clear();
         d->document->clearUndoRedoStacks();
@@ -735,7 +735,7 @@ bool DocumentManagerPrivate::loadFile(const Bookmark &location)
     //
     QTextCursor cursor(document);
     cursor.setPosition(0);
-    editor->setTextCursor(cursor);
+    editor->navigateDocumentForLoad(cursor.position());
 
     document->clearUndoRedoStacks();
     document->setUndoRedoEnabled(false);
@@ -765,12 +765,12 @@ bool DocumentManagerPrivate::loadFile(const Bookmark &location)
 
     setFilePath(location.filePath());
     editor->setPlainText(text);
-    editor->navigateDocument(0);
+    editor->navigateDocumentForLoad(0);
     emit q->operationUpdate();
 
     document->setUndoRedoEnabled(true);
 
-    editor->navigateDocument(location.cursorPosition());
+    editor->navigateDocumentForLoad(location.cursorPosition());
     editor->setReadOnly(!location.isWriteable());
     document->setReadOnly(!location.isWriteable());
 

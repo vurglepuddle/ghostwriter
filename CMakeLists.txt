@@ -38,6 +38,10 @@ set(RELEASE_SERVICE_VERSION "${RELEASE_SERVICE_VERSION_MAJOR}.${RELEASE_SERVICE_
 
 project(ghostwriter VERSION ${RELEASE_SERVICE_VERSION} LANGUAGES CXX)
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 find_package(ECM ${KF_MIN_VERSION} REQUIRED NO_MODULE)
 
 
@@ -95,8 +99,14 @@ set(ICON_FILES
     ${ICONS_FOLDER}/256-apps-ghostwriter.png
 )
 
-ecm_add_app_icon(ICONS_SOURCES ICONS ${ICON_FILES})
-target_sources(ghostwriter PRIVATE ${ICONS_SOURCES})
+if(WIN32)
+    target_sources(ghostwriter PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/windows/ghostwriter.rc
+    )
+else()
+    ecm_add_app_icon(ICONS_SOURCES ICONS ${ICON_FILES})
+    target_sources(ghostwriter PRIVATE ${ICONS_SOURCES})
+endif()
 
 if(BUILD_TESTING)
    add_subdirectory(autotest)

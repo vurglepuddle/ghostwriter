@@ -1,7 +1,13 @@
+<!--
+SPDX-FileCopyrightText: 2026 ghostwriter contributors
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
 <RCC>
     <qresource prefix="/">
         <file>resources/preview.css</file>
         <file>resources/preview.html</file>
+        <file>resources/preview-init.js</file>
+        <file>resources/preview.js</file>
         <file>resources/widgets.qss</file>
         <file>resources/banner.png</file>
         <file>3rdparty/react/react-dom.production.min.js</file>

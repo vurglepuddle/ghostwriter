@@ -4,6 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+QMainWindow,
+QMainWindow QSplitter {
+    background-color: $background-color;
+}
+
 /******************************************************************************/
 /*  Scrollbars                                                                */
 /******************************************************************************/
@@ -334,7 +339,8 @@ ghostwriter--Sidebar QPushButton[checkable="false"]:pressed {
 
 /* Stacked widgets inside sidebar pane */
 
-ghostwriter--Sidebar QListWidget {
+ghostwriter--Sidebar QListWidget,
+ghostwriter--Sidebar QTreeView {
     outline: none;
     border: 0;
     padding: 1;
@@ -344,7 +350,8 @@ ghostwriter--Sidebar QListWidget {
     font-weight: normal
 }
 
-ghostwriter--Sidebar QListWidget::item {
+ghostwriter--Sidebar QListWidget::item,
+ghostwriter--Sidebar QTreeView::item {
     border: 0;
     padding: 1 0 1 0;
     margin: 0;
@@ -353,10 +360,15 @@ ghostwriter--Sidebar QListWidget::item {
     font-weight: normal
 }
 
-ghostwriter--Sidebar QListWidget::item:selected {
+ghostwriter--Sidebar QListWidget::item:selected,
+ghostwriter--Sidebar QTreeView::item:selected {
     border-radius: 0px;
     color: $selected-text-fg-color;
     background-color: $selected-text-bg-color;
+}
+
+ghostwriter--Sidebar QTreeView::branch {
+    background-color: $background-color;
 }
 
 ghostwriter--Sidebar QLabel {

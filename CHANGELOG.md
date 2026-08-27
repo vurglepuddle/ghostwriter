@@ -7,9 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* Added Blind Draft Mode, which shows and permits editing only on the current
+  document line until the mode is turned off.
+* Live Preview now blocks external images and media by default and offers a
+  warning-bar action to load them temporarily for the current document.
+
 ### Fixed
 
 * Issue #465799: Segmentation fault no longer occurs when .conf file is missing on first launch.
+* Hardened Live Preview with an off-the-record browser profile, a restrictive
+  content security policy, and permanent blocking of document-supplied scripts
+  and active remote content.
+* The folder view now follows the active light or dark theme instead of using
+  the platform's default view colors.
+* Windows builds now embed the application icon in the executable.
+* Reduced resize repaint lag and fixed the sidebar-specific white flash when it
+  automatically hides or reappears.
 
 ## [24.08.0]
 

@@ -16,6 +16,7 @@
 #include <QSettings>
 #include <QSplitter>
 #include <QStringLiteral>
+#include <QTimer>
 #include <QToolButton>
 
 #include <KActionCollection>
@@ -69,6 +70,7 @@ private slots:
     void openPreferencesDialog();
     void toggleHtmlPreview(bool checked);
     void toggleHemingwayMode(bool checked);
+    void toggleBlindDraftMode(bool checked);
     void toggleFocusMode(bool checked);
     void toggleFullScreen(bool checked);
     void toggleHideMenuBarInFullScreen(bool checked);
@@ -122,6 +124,8 @@ private:
     bool menuBarMenuActivated;
     bool sidebarHiddenForResize;
     bool focusModeEnabled;
+    bool htmlPreviewVisibleBeforeBlindDraft;
+    QTimer editorAdjustmentTimer;
     SvgIconTheme *primaryIconTheme;
     SvgIconTheme *secondaryIconTheme;
 
@@ -150,6 +154,7 @@ private:
     void setupStatusBar();
     void setupSidebar();
 
+    void scheduleEditorAdjustment();
     void adjustEditor();
 };
 } // namespace ghostwriter

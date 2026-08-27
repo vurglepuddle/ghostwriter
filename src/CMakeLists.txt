@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: 2022-2023 Megan Conkle <megan.conkle@kdemail.net>
+# SPDX-FileCopyrightText: 2026 ghostwriter contributors
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -39,6 +40,7 @@ target_sources(ghostwriter PRIVATE
     markdown/memoryarena.cpp
     preview/htmlpreview.cpp
     preview/previewproxy.cpp
+    preview/remotecontentinterceptor.cpp
     preview/sandboxedwebpage.cpp
     settings/appsettings.cpp
     settings/localedialog.cpp
@@ -126,6 +128,7 @@ target_link_libraries(ghostwriter PRIVATE
     KF${KF_MAJOR_VERSION}::CoreAddons
     KF${KF_MAJOR_VERSION}::SonnetCore
     KF${KF_MAJOR_VERSION}::SonnetUi
+    KF${KF_MAJOR_VERSION}::WidgetsAddons
     KF${KF_MAJOR_VERSION}::XmlGui
     ${CMARK_LIBS}
 )
@@ -134,4 +137,3 @@ set_target_properties(ghostwriter PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
 )
-

@@ -1,0 +1,176 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2022 Megan Conkle <megan.conkle@kdemail.net>
+ * SPDX-FileCopyrightText: 2026 ghostwriter contributors
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+class LivePreview extends React.Component {
+    constructor(props) {
+        super(props);
+
+        this.initializeWebChannel = this.initializeWebChannel.bind(this);
+        this.loadStyleSheet = this.loadStyleSheet.bind(this);
+        this.updateLivePreview = this.updateLivePreview.bind(this);
+        this.setMathEnabled = this.setMathEnabled.bind(this);
+        this.scrollToChange = this.scrollToChange.bind(this);
+
+        this.mutationObserver = new MutationObserver(
+            this.scrollToChange
+        );
+
+        this.scrollElement = null;
+
+        this.mutationObserver.observe(
+            document.getElementById('livepreviewplaceholder'),
+            {
+                attributes: true,
+                characterData: true,
+                childList: true,
+                subtree: true,
+                attributeOldValue: false,
+                characterDataOldValue: false
+            }
+        );
+
+        this.state = {
+            livePreviewHTML: '',
+            mathEnabled: false
+        };
+
+        new QWebChannel(qt.webChannelTransport,
+            this.initializeWebChannel
+        );
+    }
+
+    initializeWebChannel(channel) {
+        var proxy = channel.objects.previewProxy;
+
+        this.loadStyleSheet(proxy.styleSheet);
+        proxy.styleSheetChanged.connect(this.loadStyleSheet);
+
+        this.updateLivePreview(proxy.htmlContent);
+        proxy.htmlChanged.connect(this.updateLivePreview);
+
+        this.setMathEnabled(proxy.mathEnabled);
+        proxy.mathToggled.connect(this.setMathEnabled);
+    }
+
+    loadStyleSheet(css) {
+        var cssElem = document.getElementById('ghostwriter_css');
+
+        if (cssElem) {
+            cssElem.textContent = css;
+        }
+        else {
+            cssElem = document.createElement('style');
+            cssElem.id = 'ghostwriter_css';
+            cssElem.type = 'text/css';
+            cssElem.media = 'all';
+            cssElem.textContent = css;
+            document.head.appendChild(cssElem);
+        }
+    }
+
+    updateLivePreview(html) {
+        this.setState({ livePreviewHTML: html });
+
+        // Call MathJax to update document, if the library is
+        // available and the math feature is enabled.
+        if ((typeof window.MathJax !== 'undefined')
+                && (this.state.mathEnabled)) {
+            window.MathJax.typeset();
+        }
+    }
+
+    setMathEnabled(enabled) {
+        this.setState({ mathEnabled: enabled });
+
+        // Clear out the old MathJax data in the DOM, otherwise
+        // React will not properly diff the old and new
+        // content where equations appear.
+        var previousHtml = this.state.livePreviewHTML;
+        this.updateLivePreview('');
+
+        // Restore the old content without the math.
+        this.updateLivePreview(previousHtml);
+    }
+
+    getLivePreviewContent() {
+        return this.state.livePreviewHTML;
+    }
+
+    scrollToChange(mutations) {
+        var scrollToNode = null;
+
+        for (var i = 0; i < mutations.length; i++) {
+            var mutation = mutations[0];
+
+            if ('attributes' === mutation.type) {
+                scrollToNode = mutation.target;
+            }
+            else if ('characterData' === mutation.type) {
+                scrollToNode = mutation.target.parentNode;
+            }
+            else if ('childList' === mutation.type) {
+                if (mutation.addedNodes.length > 0) {
+                    for (var j = 0; j < mutation.addedNodes.length; j++) {
+                        if (1 === mutation.addedNodes[j].nodeType) {
+                            scrollToNode = mutation.addedNodes[j];
+                            break;
+                        }
+                    }
+                }
+                else if (mutation.removedNodes.length > 0) {
+                    scrollToNode = mutation.removedNodes[0].previousSibling;
+
+                    // If there is no previous sibling to the deleted nodes,
+                    // then go to the parent node.
+                    if (!scrollToNode) {
+                        scrollToNode = mutation.target;
+                    }
+                }
+            }
+            else {
+                console.error('Unsupported mutation type from MutationObserver: '
+                    + mutation.type);
+            }
+        }
+
+        if (scrollToNode
+                && (typeof scrollToNode.scrollIntoView !== 'undefined')) {
+            scrollToNode.scrollIntoView();
+        }
+    }
+
+    render() {
+        return React.createElement('div', null,
+            HTMLReactParser(this.getLivePreviewContent()));
+    }
+}
+
+class ErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false };
+    }
+
+    componentDidCatch(error, info) {
+        this.setState({ hasError: true });
+    }
+
+    render() {
+        if (this.state.hasError) {
+            this.setState({ hasError: false });
+            return '<p>Game over!  Insert coin.</p>';
+        }
+
+        return this.props.children;
+    }
+}
+
+ReactDOM.render(
+    React.createElement(ErrorBoundary,
+        null,
+        React.createElement(LivePreview, null)),
+    document.getElementById('livepreviewplaceholder'));

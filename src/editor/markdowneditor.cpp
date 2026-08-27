@@ -10,6 +10,7 @@
 #include <math.h>
 
 #include <QApplication>
+#include <QAction>
 #include <QChar>
 #include <QColor>
 #include <QDateTime>
@@ -20,8 +21,10 @@
 #include <QGridLayout>
 #include <QImageReader>
 #include <QImageWriter>
+#include <QKeySequence>
 #include <QLayout>
 #include <QList>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMimeDatabase>
@@ -98,6 +101,13 @@ public:
     bool autoMatchEnabled;
     bool bulletPointCyclingEnabled;
     bool hemingwayModeEnabled;
+    bool blindDraftModeEnabled;
+    bool blindDraftNavigationAllowed;
+    bool blindDraftUndoRedoInProgress;
+    int blindDraftBlockNumber;
+    int blindDraftBlockCount;
+    int blindDraftUndoFloor;
+    int blindDraftRedoDepth;
     bool showUnbreakableSpaces;
     FocusMode focusMode;
     QBrush fadeColor;
@@ -167,6 +177,12 @@ public:
         const QRegularExpression &itemRegex,
         QRegularExpressionMatch &match
     );
+
+    QTextBlock blindDraftBlock() const;
+    QTextCursor constrainToBlindDraftBlock(const QTextCursor &cursor) const;
+    void enforceBlindDraftCursor();
+    void updateBlindDraftVisibility();
+    void commitBlindDraftLine();
 
     bool insideBlockArea(const QTextBlock &block, BlockType &type) const;
     bool atBlockAreaStart(const QTextBlock &block, BlockType &type) const;
@@ -252,6 +268,13 @@ MarkdownEditor::MarkdownEditor
     this->setCenterOnScroll(true);
     this->ensureCursorVisible();
     d->hemingwayModeEnabled = false;
+    d->blindDraftModeEnabled = false;
+    d->blindDraftNavigationAllowed = false;
+    d->blindDraftUndoRedoInProgress = false;
+    d->blindDraftBlockNumber = 0;
+    d->blindDraftBlockCount = textDocument->blockCount();
+    d->blindDraftUndoFloor = 0;
+    d->blindDraftRedoDepth = 0;
     d->focusMode = FocusModeDisabled;
     d->insertSpacesForTabs = false;
     this->setTabulationWidth(4);
@@ -383,6 +406,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event)
     //       LGPL v. 3 license for the original Qt code.
     //
     while (block.isValid() && !done) {
+        if (!block.isVisible()) {
+            if (d->blindDraftModeEnabled) {
+                break;
+            }
+
+            block = block.next();
+            firstVisible = false;
+            continue;
+        }
+
         MarkdownEditorPrivate::BlockType prevType;
         
         QRectF r = this->blockBoundingRect(block).translated(offset);
@@ -437,6 +470,14 @@ void MarkdownEditor::paintEvent(QPaintEvent *event)
 
         offset.ry() += r.height();
         dy += r.height();
+
+        // In Blind Draft Mode the active block is the only visible part of a
+        // larger code or quote area, so finish its background at this block.
+        if (d->blindDraftModeEnabled && inBlockArea) {
+            drawBlock = true;
+            inBlockArea = false;
+            blockAreaRect.setHeight(dy);
+        }
 
         // If this is the last text block visible within the viewport...
         if (offset.y() > viewportRect.height()) {
@@ -507,6 +548,16 @@ void MarkdownEditor::paintEvent(QPaintEvent *event)
     while (block.isValid() && !done) {        
         QRectF r = this->blockBoundingRect(block).translated(offset);
         auto text = block.text();
+
+        if (!block.isVisible()) {
+            if (d->blindDraftModeEnabled) {
+                break;
+            }
+
+            block = block.next();
+            offset.ry() += r.height();
+            continue;
+        }
 
         // If not in a code block, and the current block ends with two spaces
         // to indicate a line break in Markdown syntax, then draw the line
@@ -617,8 +668,15 @@ void MarkdownEditor::setPlainText(const QString &text)
     d->loadingDocument = true;
     d->typingHasPaused = true;
     d->scaledTypingHasPaused = true;
+    bool blindDraftNavigationAllowed = d->blindDraftNavigationAllowed;
+    d->blindDraftNavigationAllowed = true;
     QPlainTextEdit::setPlainText(text);
+    d->blindDraftNavigationAllowed = blindDraftNavigationAllowed;
     d->loadingDocument = false;
+
+    if (d->blindDraftModeEnabled) {
+        d->commitBlindDraftLine();
+    }
 }
 
 QLayout *MarkdownEditor::preferredLayout()
@@ -643,6 +701,52 @@ void MarkdownEditor::setHemingWayModeEnabled(bool enabled)
     Q_D(MarkdownEditor);
     
     d->hemingwayModeEnabled = enabled;
+}
+
+bool MarkdownEditor::blindDraftModeEnabled() const
+{
+    Q_D(const MarkdownEditor);
+
+    return d->blindDraftModeEnabled;
+}
+
+void MarkdownEditor::setBlindDraftModeEnabled(bool enabled)
+{
+    Q_D(MarkdownEditor);
+
+    if (d->blindDraftModeEnabled == enabled) {
+        return;
+    }
+
+    d->blindDraftModeEnabled = enabled;
+
+    if (enabled) {
+        d->blindDraftBlockNumber = this->textCursor().blockNumber();
+        d->blindDraftUndoFloor = this->document()->availableUndoSteps();
+        d->blindDraftRedoDepth = 0;
+        d->enforceBlindDraftCursor();
+    }
+
+    d->updateBlindDraftVisibility();
+    this->focusText();
+    this->ensureCursorVisible();
+    this->update();
+}
+
+int MarkdownEditor::blindDraftLineStart() const
+{
+    Q_D(const MarkdownEditor);
+    QTextBlock block = d->blindDraftBlock();
+
+    return block.isValid() ? block.position() : 0;
+}
+
+int MarkdownEditor::blindDraftLineEnd() const
+{
+    Q_D(const MarkdownEditor);
+    QTextBlock block = d->blindDraftBlock();
+
+    return block.isValid() ? block.position() + block.length() - 1 : 0;
 }
 
 FocusMode MarkdownEditor::focusMode() const
@@ -803,6 +907,35 @@ int MarkdownEditor::cursorWidth() const
     return MarkdownEditorPrivate::CursorWidth;
 }
 
+QMenu *MarkdownEditor::createStandardContextMenu()
+{
+    Q_D(MarkdownEditor);
+    QMenu *menu = QPlainTextEdit::createStandardContextMenu();
+
+    if (!d->blindDraftModeEnabled) {
+        return menu;
+    }
+
+    for (QAction *action : menu->actions()) {
+        if (action->objectName() == QStringLiteral("edit-undo")) {
+            action->disconnect();
+            connect(action, &QAction::triggered, this, &MarkdownEditor::undo);
+            action->setEnabled(this->document()->availableUndoSteps()
+                > d->blindDraftUndoFloor);
+        } else if (action->objectName() == QStringLiteral("edit-redo")) {
+            action->disconnect();
+            connect(action, &QAction::triggered, this, &MarkdownEditor::redo);
+            action->setEnabled((d->blindDraftRedoDepth > 0)
+                && this->document()->isRedoAvailable());
+        } else if (action->objectName() == QStringLiteral("edit-delete")) {
+            action->setEnabled(!d->hemingwayModeEnabled
+                && this->textCursor().hasSelection());
+        }
+    }
+
+    return menu;
+}
+
 bool MarkdownEditor::canInsertFromMimeData(const QMimeData *source) const
 {
     return source->hasImage() || QPlainTextEdit::canInsertFromMimeData(source);
@@ -830,7 +963,14 @@ void MarkdownEditor::dragLeaveEvent(QDragLeaveEvent *e)
 void MarkdownEditor::dropEvent(QDropEvent *e)
 {
     Q_D(MarkdownEditor);
-    
+
+    const int originalBlindDraftBlock = d->blindDraftBlockNumber;
+    const bool navigationWasAllowed = d->blindDraftNavigationAllowed;
+
+    if (d->blindDraftModeEnabled) {
+        d->blindDraftNavigationAllowed = true;
+    }
+
     if (e->mimeData()->hasUrls() && (e->mimeData()->urls().size() == 1)) {
         e->acceptProposedAction();
 
@@ -842,6 +982,10 @@ void MarkdownEditor::dropEvent(QDropEvent *e)
         QString fileExtension = fileInfo.suffix().toLower();
 
         QTextCursor dropCursor = cursorForPosition(e->position().toPoint());
+
+        if (d->blindDraftModeEnabled) {
+            dropCursor = d->constrainToBlindDraftBlock(dropCursor);
+        }
 
         // If the file extension indicates an image type, then insert an
         // image link into the text.
@@ -891,11 +1035,27 @@ void MarkdownEditor::dropEvent(QDropEvent *e)
     } else {
         QPlainTextEdit::dropEvent(e);
     }
+
+    d->blindDraftNavigationAllowed = navigationWasAllowed;
+
+    if (d->blindDraftModeEnabled
+        && (this->textCursor().blockNumber() != originalBlindDraftBlock)) {
+        d->commitBlindDraftLine();
+    } else {
+        d->enforceBlindDraftCursor();
+    }
 }
 
 void MarkdownEditor::insertFromMimeData(const QMimeData *source)
 {
     Q_D(MarkdownEditor);
+
+    const int originalBlindDraftBlock = d->blindDraftBlockNumber;
+    const bool navigationWasAllowed = d->blindDraftNavigationAllowed;
+
+    if (d->blindDraftModeEnabled) {
+        d->blindDraftNavigationAllowed = true;
+    }
 
     if (source->hasImage()) {
         QImage image = qvariant_cast<QImage>(source->imageData());
@@ -928,6 +1088,14 @@ void MarkdownEditor::insertFromMimeData(const QMimeData *source)
                     qApp->applicationName(),
                     writer.errorString());
                 QPlainTextEdit::insertFromMimeData(source);
+                d->blindDraftNavigationAllowed = navigationWasAllowed;
+
+                if (d->blindDraftModeEnabled
+                    && (this->textCursor().blockNumber() != originalBlindDraftBlock)) {
+                    d->commitBlindDraftLine();
+                } else {
+                    d->enforceBlindDraftCursor();
+                }
                 return;
             }
 
@@ -955,6 +1123,15 @@ void MarkdownEditor::insertFromMimeData(const QMimeData *source)
     } else {
         QPlainTextEdit::insertFromMimeData(source);
     }
+
+    d->blindDraftNavigationAllowed = navigationWasAllowed;
+
+    if (d->blindDraftModeEnabled
+        && (this->textCursor().blockNumber() != originalBlindDraftBlock)) {
+        d->commitBlindDraftLine();
+    } else {
+        d->enforceBlindDraftCursor();
+    }
 }
 
 /*
@@ -963,13 +1140,30 @@ void MarkdownEditor::insertFromMimeData(const QMimeData *source)
 void MarkdownEditor::keyPressEvent(QKeyEvent *e)
 {
     Q_D(MarkdownEditor);
-    
+
+    d->enforceBlindDraftCursor();
+
+    if (e->matches(QKeySequence::Undo)) {
+        undo();
+        return;
+    }
+
+    if (e->matches(QKeySequence::Redo)) {
+        redo();
+        return;
+    }
+
     int key = e->key();
 
     QTextCursor cursor(this->textCursor());
 
     switch (key) {
+    case Qt::Key_Enter:
     case Qt::Key_Return:
+        if (d->blindDraftModeEnabled) {
+            d->blindDraftNavigationAllowed = true;
+        }
+
         if (!cursor.hasSelection()) {
             if (e->modifiers() & Qt::ShiftModifier) {
                 // Insert Markdown-style line break
@@ -985,14 +1179,25 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *e)
         } else {
             QPlainTextEdit::keyPressEvent(e);
         }
+
+        if (d->blindDraftModeEnabled) {
+            d->blindDraftNavigationAllowed = false;
+            d->commitBlindDraftLine();
+        }
         break;
     case Qt::Key_Delete:
-        if (!d->hemingwayModeEnabled) {
+        if (!d->hemingwayModeEnabled
+            && (!d->blindDraftModeEnabled
+                || cursor.hasSelection()
+                || (cursor.position() < blindDraftLineEnd()))) {
             QPlainTextEdit::keyPressEvent(e);
         }
         break;
     case Qt::Key_Backspace:
-        if (!d->hemingwayModeEnabled) {
+        if (!d->hemingwayModeEnabled
+            && (!d->blindDraftModeEnabled
+                || cursor.hasSelection()
+                || (cursor.position() > blindDraftLineStart()))) {
             if (!d->handleBackspaceKey()) {
                 QPlainTextEdit::keyPressEvent(e);
             }
@@ -1023,6 +1228,8 @@ void MarkdownEditor::keyPressEvent(QKeyEvent *e)
         }
         break;
     }
+
+    d->enforceBlindDraftCursor();
 }
 
 void MarkdownEditor::mouseDoubleClickEvent(QMouseEvent *e)
@@ -1031,6 +1238,7 @@ void MarkdownEditor::mouseDoubleClickEvent(QMouseEvent *e)
 
     d->mouseButtonDown = true;
     QPlainTextEdit::mouseDoubleClickEvent(e);
+    d->enforceBlindDraftCursor();
 }
 
 void MarkdownEditor::mousePressEvent(QMouseEvent *e)
@@ -1039,6 +1247,7 @@ void MarkdownEditor::mousePressEvent(QMouseEvent *e)
 
     d->mouseButtonDown = true;
     QPlainTextEdit::mousePressEvent(e);
+    d->enforceBlindDraftCursor();
 }
 
 void MarkdownEditor::mouseReleaseEvent(QMouseEvent *e)
@@ -1047,6 +1256,7 @@ void MarkdownEditor::mouseReleaseEvent(QMouseEvent *e)
 
     d->mouseButtonDown = false;
     QPlainTextEdit::mouseReleaseEvent(e);
+    d->enforceBlindDraftCursor();
 }
 
 void MarkdownEditor::wheelEvent(QWheelEvent *e)
@@ -1092,6 +1302,64 @@ void MarkdownEditor::navigateDocument(const int position)
     this->setFocus();
 }
 
+void MarkdownEditor::navigateDocumentForLoad(const int position)
+{
+    Q_D(MarkdownEditor);
+    QTextCursor cursor = this->textCursor();
+    const int lastPosition = qMax(0, this->document()->characterCount() - 1);
+
+    d->blindDraftNavigationAllowed = true;
+    cursor.setPosition(qBound(0, position, lastPosition));
+    this->setTextCursor(cursor);
+
+    if (d->blindDraftModeEnabled) {
+        d->commitBlindDraftLine();
+    }
+
+    d->blindDraftNavigationAllowed = false;
+}
+
+void MarkdownEditor::undo()
+{
+    Q_D(MarkdownEditor);
+
+    if (d->blindDraftModeEnabled
+        && (this->document()->availableUndoSteps() <= d->blindDraftUndoFloor)) {
+        return;
+    }
+
+    d->blindDraftUndoRedoInProgress = true;
+    QPlainTextEdit::undo();
+    d->blindDraftUndoRedoInProgress = false;
+
+    if (d->blindDraftModeEnabled) {
+        ++d->blindDraftRedoDepth;
+        d->enforceBlindDraftCursor();
+        d->updateBlindDraftVisibility();
+    }
+}
+
+void MarkdownEditor::redo()
+{
+    Q_D(MarkdownEditor);
+
+    if (d->blindDraftModeEnabled
+        && ((d->blindDraftRedoDepth <= 0)
+            || !this->document()->isRedoAvailable())) {
+        return;
+    }
+
+    d->blindDraftUndoRedoInProgress = true;
+    QPlainTextEdit::redo();
+    d->blindDraftUndoRedoInProgress = false;
+
+    if (d->blindDraftModeEnabled) {
+        --d->blindDraftRedoDepth;
+        d->enforceBlindDraftCursor();
+        d->updateBlindDraftVisibility();
+    }
+}
+
 void MarkdownEditor::bold()
 {
     Q_D(MarkdownEditor);
@@ -1118,8 +1386,14 @@ void MarkdownEditor::strikethrough()
 
 void MarkdownEditor::insertCodeFences()
 {
+    Q_D(MarkdownEditor);
     QTextCursor cursor = this->textCursor();
     QString text;
+    const int originalBlindDraftBlock = d->blindDraftBlockNumber;
+
+    if (d->blindDraftModeEnabled) {
+        d->blindDraftNavigationAllowed = true;
+    }
 
     if (cursor.block().position() != cursor.position()) {
         text = "\n";
@@ -1129,11 +1403,25 @@ void MarkdownEditor::insertCodeFences()
         QString selText = cursor.selectedText();
         text += QString("```\n" + selText + "\n```\n");
         cursor.insertText(text);
+
+        if (d->blindDraftModeEnabled) {
+            this->setTextCursor(cursor);
+        }
     } else {
         text += QString("```\n\n```\n");
         cursor.insertText(text);
         cursor.movePosition(QTextCursor::PreviousCharacter, QTextCursor::MoveAnchor, 5);
         this->setTextCursor(cursor);
+    }
+
+    if (d->blindDraftModeEnabled) {
+        d->blindDraftNavigationAllowed = false;
+
+        if (this->textCursor().blockNumber() != originalBlindDraftBlock) {
+            d->commitBlindDraftLine();
+        } else {
+            d->enforceBlindDraftCursor();
+        }
     }
 }
 
@@ -1672,6 +1960,17 @@ void MarkdownEditor::onContentsChanged(int position, int charsRemoved, int chars
         return;
     }
 
+    if (d->blindDraftModeEnabled) {
+        if (!d->blindDraftUndoRedoInProgress) {
+            d->blindDraftRedoDepth = 0;
+        }
+
+        if ((d->blindDraftBlockCount != this->document()->blockCount())
+            || !this->document()->findBlockByNumber(d->blindDraftBlockNumber).isValid()) {
+            d->updateBlindDraftVisibility();
+        }
+    }
+
     d->parseDocument();
 
     // Don't use the textChanged() or contentsChanged() (no parameters) signals
@@ -1692,6 +1991,9 @@ void MarkdownEditor::onContentsChanged(int position, int charsRemoved, int chars
 
 void MarkdownEditor::onSelectionChanged()
 {
+    Q_D(MarkdownEditor);
+
+    d->enforceBlindDraftCursor();
     QTextCursor cursor = this->textCursor();
 
     if (cursor.hasSelection()) {
@@ -1845,13 +2147,16 @@ void MarkdownEditor::checkIfTypingPausedScaled()
 void MarkdownEditor::onCursorPositionChanged()
 {
     Q_D(MarkdownEditor);
-    
+
+    d->enforceBlindDraftCursor();
+
     if (!d->mouseButtonDown) {
         QRect cursor = this->cursorRect();
         QRect viewport = this->viewport()->rect();
         int bottom = viewport.bottom() - this->fontMetrics().height();
 
-        if ((d->focusMode != FocusModeDisabled)
+        if (d->blindDraftModeEnabled
+                || (d->focusMode != FocusModeDisabled)
                 || (cursor.bottom() >= bottom)
                 || (cursor.top() <= viewport.top())) {
             centerCursor();
@@ -1869,6 +2174,102 @@ void MarkdownEditor::onCursorPositionChanged()
     update();
 
     emit cursorPositionChanged(this->textCursor().position());
+}
+
+QTextBlock MarkdownEditorPrivate::blindDraftBlock() const
+{
+    Q_Q(const MarkdownEditor);
+    QTextBlock block = q->document()->findBlockByNumber(blindDraftBlockNumber);
+
+    if (!block.isValid()) {
+        block = q->textCursor().block();
+    }
+
+    if (!block.isValid()) {
+        block = q->document()->firstBlock();
+    }
+
+    return block;
+}
+
+QTextCursor MarkdownEditorPrivate::constrainToBlindDraftBlock(const QTextCursor &cursor) const
+{
+    Q_Q(const MarkdownEditor);
+
+    if (!blindDraftModeEnabled || !cursor.document()
+        || (cursor.document() != q->document())) {
+        return cursor;
+    }
+
+    QTextBlock block = blindDraftBlock();
+
+    if (!block.isValid()) {
+        return QTextCursor(q->document());
+    }
+
+    const int start = block.position();
+    const int end = start + block.length() - 1;
+    const int position = qBound(start, cursor.position(), end);
+    const int anchor = qBound(start, cursor.anchor(), end);
+    QTextCursor constrained(cursor);
+    constrained.setPosition(anchor);
+    constrained.setPosition(position, (position == anchor)
+        ? QTextCursor::MoveAnchor
+        : QTextCursor::KeepAnchor);
+
+    return constrained;
+}
+
+void MarkdownEditorPrivate::enforceBlindDraftCursor()
+{
+    Q_Q(MarkdownEditor);
+
+    if (!blindDraftModeEnabled || blindDraftNavigationAllowed) {
+        return;
+    }
+
+    QTextCursor cursor = q->textCursor();
+    QTextCursor constrained = constrainToBlindDraftBlock(cursor);
+
+    if ((cursor.position() != constrained.position())
+        || (cursor.anchor() != constrained.anchor())) {
+        blindDraftNavigationAllowed = true;
+        q->QPlainTextEdit::setTextCursor(constrained);
+        blindDraftNavigationAllowed = false;
+    }
+}
+
+void MarkdownEditorPrivate::updateBlindDraftVisibility()
+{
+    Q_Q(MarkdownEditor);
+    QTextBlock activeBlock = blindDraftBlock();
+    QTextBlock block = q->document()->firstBlock();
+
+    while (block.isValid()) {
+        block.setVisible(!blindDraftModeEnabled || (block == activeBlock));
+        block = block.next();
+    }
+
+    q->document()->markContentsDirty(0, q->document()->characterCount());
+    blindDraftBlockCount = q->document()->blockCount();
+    q->viewport()->update();
+}
+
+void MarkdownEditorPrivate::commitBlindDraftLine()
+{
+    Q_Q(MarkdownEditor);
+
+    if (!blindDraftModeEnabled) {
+        return;
+    }
+
+    blindDraftBlockNumber = q->textCursor().blockNumber();
+    blindDraftUndoFloor = q->document()->availableUndoSteps();
+    blindDraftRedoDepth = 0;
+    enforceBlindDraftCursor();
+    updateBlindDraftVisibility();
+    q->focusText();
+    q->ensureCursorVisible();
 }
 
 void MarkdownEditorPrivate::toggleCursorBlink()

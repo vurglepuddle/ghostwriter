@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: 2018-2023 Megan Conkle <megan.conkle@kdemail.net>
+ * SPDX-FileCopyrightText: 2026 ghostwriter contributors
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -8,6 +9,8 @@
 #define SANDBOXEDWEBPAGE_H
 
 #include <QWebEnginePage>
+
+class QWebEngineProfile;
 
 namespace ghostwriter
 {
@@ -22,7 +25,7 @@ public:
     /**
      * Constructor.
      */
-    SandboxedWebPage(QObject *parent = nullptr);
+    SandboxedWebPage(QWebEngineProfile *profile, QObject *parent = nullptr);
 
     /**
      * Destructor.
@@ -33,12 +36,7 @@ public:
      * Handles link clicks and opens external links with the
      * default system browser.
      */
-    bool acceptNavigationRequest(
-        const QUrl &url,
-        QWebEnginePage::NavigationType type,
-        bool isMainFrame
-    ) override;
-
+    bool acceptNavigationRequest(const QUrl &url, QWebEnginePage::NavigationType type, bool isMainFrame) override;
 };
 } // namespace ghostwriter
 

@@ -15,6 +15,8 @@
 #include "markdowndocument.h"
 #include "markdowneditortypes.h"
 
+class QMenu;
+
 namespace ghostwriter
 {
 /**
@@ -83,6 +85,26 @@ public:
     void setHemingWayModeEnabled(bool enabled);
 
     /**
+     * Gets whether Blind Draft Mode is enabled.
+     */
+    bool blindDraftModeEnabled() const;
+
+    /**
+     * Sets whether Blind Draft Mode is enabled.
+     */
+    void setBlindDraftModeEnabled(bool enabled);
+
+    /**
+     * Returns the first document position in the editable Blind Draft line.
+     */
+    int blindDraftLineStart() const;
+
+    /**
+     * Returns the last document position in the editable Blind Draft line.
+     */
+    int blindDraftLineEnd() const;
+
+    /**
      * Gets the current focus mode.
      */
     FocusMode focusMode() const;
@@ -139,6 +161,12 @@ public:
     QRect cursorRect(const QTextCursor &cursor) const;
     QRect cursorRect() const;
     int cursorWidth() const;
+
+    /**
+     * Creates the standard editor context menu with Blind Draft undo/redo
+     * boundaries applied.
+     */
+    QMenu *createStandardContextMenu();
 
 protected:
     bool canInsertFromMimeData(const QMimeData *source) const override;
@@ -219,6 +247,23 @@ public slots:
      * Sets the cursor position in the editor to the given position.
      */
     void navigateDocument(const int position);
+
+    /**
+     * Navigates while resetting the editable Blind Draft line. This is only
+     * intended for opening or reloading a document.
+     */
+    void navigateDocumentForLoad(const int position);
+
+    /**
+     * Undoes an edit without crossing the current Blind Draft line's commit
+     * point.
+     */
+    void undo();
+
+    /**
+     * Redoes an edit made after the current Blind Draft line's commit point.
+     */
+    void redo();
 
     /**
      * Inserts bold formatting.

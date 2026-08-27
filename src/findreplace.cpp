@@ -17,6 +17,7 @@
 #include <QTextCursor>
 #include <QTimer>
 
+#include "editor/markdowneditor.h"
 #include "findreplace.h"
 
 #define GW_FIND_REPLACE_MATCH_CASE "FindReplace/matchCase"
@@ -462,15 +463,35 @@ bool FindReplacePrivate::findMatch(QTextCursor& cursor, bool wrap, bool backward
 
     bool found = false;
     int wrapCount = 0;
+    MarkdownEditor *markdownEditor = qobject_cast<MarkdownEditor *>(this->editor);
+    const bool blindDraftModeEnabled = markdownEditor
+        && markdownEditor->blindDraftModeEnabled();
     this->statusLabel->setText("");
     this->statusLabel->setProperty("error", false);
 
     while (!found && (wrapCount < 2)) {
+        if (blindDraftModeEnabled) {
+            const int lineStart = markdownEditor->blindDraftLineStart();
+            const int lineEnd = markdownEditor->blindDraftLineEnd();
+
+            if ((cursor.position() < lineStart) || (cursor.position() > lineEnd)) {
+                cursor = this->editor->textCursor();
+                cursor.clearSelection();
+                cursor.setPosition(backwards ? lineEnd : lineStart);
+            }
+        }
+
         if (expr.pattern().isEmpty() || expr.pattern().isNull()) {
             cursor = this->editor->document()->find(searchText, cursor, findFlags);
         }
         else {
             cursor = this->editor->document()->find(expr, cursor, findFlags);
+        }
+
+        if (!cursor.isNull() && blindDraftModeEnabled
+            && ((cursor.selectionStart() < markdownEditor->blindDraftLineStart())
+                || (cursor.selectionEnd() > markdownEditor->blindDraftLineEnd()))) {
+            cursor = QTextCursor();
         }
 
         if (!cursor.isNull()) {
@@ -480,14 +501,17 @@ bool FindReplacePrivate::findMatch(QTextCursor& cursor, bool wrap, bool backward
             break;
         }
         else {
-            QTextCursor::MoveOperation location = QTextCursor::Start;
-            
-            if (backwards) {
-                location = QTextCursor::End;
+            cursor = this->editor->textCursor();
+            cursor.clearSelection();
+
+            if (blindDraftModeEnabled) {
+                cursor.setPosition(backwards
+                    ? markdownEditor->blindDraftLineEnd()
+                    : markdownEditor->blindDraftLineStart());
+            } else {
+                cursor.movePosition(backwards ? QTextCursor::End : QTextCursor::Start);
             }
 
-            cursor = this->editor->textCursor();
-            cursor.movePosition(location);
             this->statusLabel->setText(FindReplace::tr("Search wrapped"));
 
             wrapCount++;

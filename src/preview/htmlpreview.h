@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: 2014-2023 Megan Conkle <megan.conkle@kdemail.net>
+ * SPDX-FileCopyrightText: 2026 ghostwriter contributors
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -11,12 +12,6 @@
 #include <QString>
 #include <QWidget>
 
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-#include <QtWebEngineWidgets>
-#else
-#include <QtWebEngineWidgets/QWebEngineView>
-#endif
-
 #include "editor/markdowndocument.h"
 #include "export/exporter.h"
 
@@ -26,7 +21,7 @@ namespace ghostwriter
  * Live HTML Preview window.
  */
 class HtmlPreviewPrivate;
-class HtmlPreview : public QWebEngineView
+class HtmlPreview : public QWidget
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(HtmlPreview)
@@ -36,22 +31,12 @@ public:
      * Constructor.  Takes text document to be rendered as HTML as
      * parameter.
      */
-    HtmlPreview
-    (
-        MarkdownDocument *document,
-        Exporter *exporter,
-        QWidget *parent = nullptr
-    );
+    HtmlPreview(MarkdownDocument *document, Exporter *exporter, QWidget *parent = nullptr);
 
     /**
      * Destructor.
      */
     virtual ~HtmlPreview();
-
-    /**
-     * Customize QtWebEngine context menu.
-     */
-    void contextMenuEvent(QContextMenuEvent *event) override;
 
 public slots:
     /**
@@ -84,12 +69,21 @@ public slots:
      */
     void setMathEnabled(bool enabled);
 
+    /**
+     * Allows remote images and media for the currently open document.
+     */
+    void allowRemoteContent();
+
+    /**
+     * Blocks remote content and clears the current document's permission.
+     */
+    void resetRemoteContentPermission();
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
     QScopedPointer<HtmlPreviewPrivate> d_ptr;
-
 };
 } // namespace ghostwriter
 

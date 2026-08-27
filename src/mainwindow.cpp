@@ -80,7 +80,16 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
     Bookmark fileToOpen(filePath);
 
     focusModeEnabled = false;
+    sidebarHiddenForResize = false;
+    htmlPreviewVisibleBeforeBlindDraft = false;
     appSettings = AppSettings::instance();
+
+    // Text viewport-margin and cursor-scroll updates can be expensive for a
+    // large document. Coalesce them during interactive window resizing so the
+    // native window's backing store can paint each new client size first.
+    editorAdjustmentTimer.setSingleShot(true);
+    editorAdjustmentTimer.setInterval(40);
+    connect(&editorAdjustmentTimer, &QTimer::timeout, this, &MainWindow::adjustEditor);
 
     loadTheme();
     m_actionCollection = new KActionCollection(this);
@@ -211,7 +220,13 @@ void MainWindow::resizeEvent(QResizeEvent *event)
         }
     }
 
-    adjustEditor();
+    // QMainWindow performs the central-widget and status-bar layout in its
+    // resize handler. Skipping it leaves those widgets at their previous
+    // height during an interactive resize, exposing the native window
+    // surface beneath them.
+    QMainWindow::resizeEvent(event);
+
+    scheduleEditorAdjustment();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *e)
@@ -339,6 +354,42 @@ void MainWindow::toggleHemingwayMode(bool checked)
         editor->setHemingWayModeEnabled(true);
     } else {
         editor->setHemingWayModeEnabled(false);
+    }
+}
+
+void MainWindow::toggleBlindDraftMode(bool checked)
+{
+    if (editor->blindDraftModeEnabled() == checked) {
+        return;
+    }
+
+    editor->setBlindDraftModeEnabled(checked);
+
+    if (checked) {
+        htmlPreviewVisibleBeforeBlindDraft = htmlPreview->isVisible();
+        htmlPreview->setVisible(false);
+        appAction(AppActions::Preview)->setEnabled(false);
+    } else {
+        appAction(AppActions::Preview)->setEnabled(true);
+        htmlPreview->setVisible(htmlPreviewVisibleBeforeBlindDraft);
+
+        if (htmlPreviewVisibleBeforeBlindDraft) {
+            htmlPreview->updatePreview();
+        }
+    }
+
+    adjustEditor();
+
+    // The spelling dialog navigates and replaces throughout the document,
+    // which is intentionally unavailable while committed lines are locked.
+    appAction(AppActions::Spelling)->setEnabled(!checked);
+
+    if (checked) {
+        const QList<SpellCheckDialog *> dialogs = editor->findChildren<SpellCheckDialog *>();
+
+        for (SpellCheckDialog *dialog : dialogs) {
+            dialog->close();
+        }
     }
 }
 
@@ -633,7 +684,7 @@ void MainWindow::onSidebarVisibilityChanged(bool visible)
         editor->setFocus();
     }
 
-    this->adjustEditor();
+    scheduleEditorAdjustment();
 }
 
 void MainWindow::toggleSidebarVisible(bool visible)
@@ -822,6 +873,7 @@ void MainWindow::setupActions()
     appAction(AppActions::Preview)->setChecked(appSettings->htmlPreviewVisible());
     m_actions->connect(AppActions::Preview, this, &MainWindow::toggleHtmlPreview);
     m_actions->connect(AppActions::HemingwayMode, this, &MainWindow::toggleHemingwayMode);
+    m_actions->connect(AppActions::BlindDraftMode, this, &MainWindow::toggleBlindDraftMode);
     appAction(AppActions::DarkMode)->setChecked(appSettings->darkModeEnabled());
     m_actions->connect(AppActions::DarkMode, this, [this](bool enabled) {
         appSettings->setDarkModeEnabled(enabled);
@@ -950,7 +1002,11 @@ void MainWindow::setupGui()
 
     connect(editor, &MarkdownEditor::typingPausedScaled, htmlPreview, &HtmlPreview::updatePreview);
 
+    connect(documentManager, &DocumentManager::documentLoaded, htmlPreview, &HtmlPreview::resetRemoteContentPermission);
+
     connect(documentManager, &DocumentManager::documentLoaded, htmlPreview, &HtmlPreview::updatePreview);
+
+    connect(documentManager, &DocumentManager::documentClosed, htmlPreview, &HtmlPreview::resetRemoteContentPermission);
 
     connect(documentManager, &DocumentManager::documentClosed, htmlPreview, &HtmlPreview::updatePreview);
 
@@ -1097,6 +1153,7 @@ void MainWindow::setupMenuBar()
     menu->addAction(appAction(AppActions::DistractionFreeMode));
     menu->addAction(appAction(AppActions::Preview));
     menu->addAction(appAction(AppActions::HemingwayMode));
+    menu->addAction(appAction(AppActions::BlindDraftMode));
     menu->addAction(appAction(AppActions::DarkMode));
     menu->addSeparator();
     menu->addAction(appAction(AppActions::ShowSidebar));
@@ -1230,6 +1287,13 @@ void MainWindow::setupStatusBar()
     button = new QToolButton();
     button->setDefaultAction(appAction(AppActions::HemingwayMode));
     button->setIcon(secondaryIconTheme->icon("hemingway-mode"));
+    button->setFocusPolicy(Qt::NoFocus);
+    rightLayout->addWidget(button, 0, Qt::AlignRight);
+    statusBarWidgets.append(button);
+
+    button = new QToolButton();
+    button->setDefaultAction(appAction(AppActions::BlindDraftMode));
+    button->setIcon(secondaryIconTheme->checkableIcon("checkbox-unchecked", "checkbox-checked"));
     button->setFocusPolicy(Qt::NoFocus);
     rightLayout->addWidget(button, 0, Qt::AlignRight);
     statusBarWidgets.append(button);
@@ -1382,11 +1446,13 @@ void MainWindow::setupSidebar()
     sidebar->setMinimumWidth(0.1 * qApp->primaryScreen()->size().width());
 }
 
+void MainWindow::scheduleEditorAdjustment()
+{
+    editorAdjustmentTimer.start();
+}
+
 void MainWindow::adjustEditor()
 {
-    // Make sure editor size is updated.
-    qApp->processEvents();
-
     int width = this->width();
     int sidebarWidth = 0;
 

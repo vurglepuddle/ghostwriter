@@ -223,6 +223,14 @@ AppActions::AppActions(KActionCollection *collection, SvgIconTheme *iconTheme, Q
         tr("Hemingway mode disables the backspace and delete keys to help you "
            "resist the temptation to edit your document as you write."));
 
+    action = d->addCheckAction(BlindDraftMode, "view_blind_draft_mode", tr("Blind Draft Mode"), NO_ICON, tr("CTRL+SHIFT+B"));
+    action->setToolTip(tr("Toggles Blind Draft Mode."));
+    action->setWhatsThis(
+        tr("Blind Draft Mode shows and allows editing only on the current "
+           "document line. Pressing Enter commits that line until the mode "
+           "is turned off. Live Preview is temporarily hidden while Blind "
+           "Draft Mode is active."));
+
     action = d->addCheckAction(DarkMode, "view_dark_mode", tr("Dark Mode"), "dark-mode");
     action->setToolTip(tr("Enables/disables the current theme's dark color scheme."));
     action->setWhatsThis(

@@ -25,6 +25,7 @@
 #include <Sonnet/Settings>
 #include <Sonnet/Speller>
 
+#include "../editor/markdowneditor.h"
 #include "spellcheckdecorator.h"
 #include "spellcheckdialog.h"
 
@@ -238,10 +239,15 @@ QMenu * SpellCheckDecoratorPrivate::createContextMenu()
 
     // Add spell check action to the standard context menu that comes with
     // the editor.
-    QMenu *popupMenu = this->editor->createStandardContextMenu();
+    MarkdownEditor *markdownEditor = qobject_cast<MarkdownEditor *>(this->editor);
+    QMenu *popupMenu = markdownEditor
+        ? markdownEditor->createStandardContextMenu()
+        : this->editor->createStandardContextMenu();
 
     QAction *checkSpellingAction =
         new QAction(SpellCheckDecorator::tr("Check spelling..."), popupMenu);
+    checkSpellingAction->setEnabled(!markdownEditor
+        || !markdownEditor->blindDraftModeEnabled());
 
     q->connect(checkSpellingAction,
         &QAction::triggered,

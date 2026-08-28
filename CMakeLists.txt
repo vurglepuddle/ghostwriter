@@ -101,6 +101,7 @@ set(ICON_FILES
 
 if(WIN32)
     target_sources(ghostwriter PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/windows/ghostwriter.exe.manifest
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/windows/ghostwriter.rc
     )
 else()

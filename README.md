@@ -32,7 +32,7 @@ The full list is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Getting the app
 
-There are no ready-made downloads of this fork. Build it from source as described below.
+Download the latest portable Windows build from the [Releases page](https://github.com/vurglepuddle/ghostwriter/releases/latest). Extract the whole ZIP and run `ghostwriter.exe`. Nothing needs to be installed. You can also build it yourself as described below.
 
 If you want the original *ghostwriter* instead, KDE packages it for Linux, and there are more options on the [original project's site](https://ghostwriter.kde.org).
 

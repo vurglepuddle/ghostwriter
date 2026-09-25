@@ -12,6 +12,8 @@
 #include <QString>
 #include <QWidget>
 
+class QUrl;
+
 #include "editor/markdowndocument.h"
 #include "export/exporter.h"
 
@@ -78,6 +80,10 @@ public slots:
      * Blocks remote content and clears the current document's permission.
      */
     void resetRemoteContentPermission();
+
+private slots:
+    void onViewLoadFinished(bool ok);
+    void onFeaturePermissionRequested(const QUrl &securityOrigin);
 
 protected:
     void closeEvent(QCloseEvent *event) override;

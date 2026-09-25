@@ -133,6 +133,18 @@ target_link_libraries(ghostwriter PRIVATE
     ${CMARK_LIBS}
 )
 
+# HtmlPreview is created lazily. Keep Windows from loading the WebEngine DLLs
+# before that first use as well; otherwise the PE loader pays most of the
+# Chromium startup cost even when Live Preview is disabled.
+if(MSVC)
+    target_link_options(ghostwriter PRIVATE
+        "/DELAYLOAD:$<TARGET_FILE_NAME:Qt::WebChannel>"
+        "/DELAYLOAD:$<TARGET_FILE_NAME:Qt::WebEngineCore>"
+        "/DELAYLOAD:$<TARGET_FILE_NAME:Qt::WebEngineWidgets>"
+    )
+    target_link_libraries(ghostwriter PRIVATE delayimp)
+endif()
+
 set_target_properties(ghostwriter PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON

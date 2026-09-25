@@ -125,6 +125,7 @@ private:
     bool sidebarHiddenForResize;
     bool focusModeEnabled;
     bool htmlPreviewVisibleBeforeBlindDraft;
+    bool documentLoadAwaitingStatistics;
     QTimer editorAdjustmentTimer;
     SvgIconTheme *primaryIconTheme;
     SvgIconTheme *secondaryIconTheme;
@@ -153,6 +154,7 @@ private:
     void setupMenuBar();
     void setupStatusBar();
     void setupSidebar();
+    void ensureHtmlPreview();
 
     void scheduleEditorAdjustment();
     void adjustEditor();

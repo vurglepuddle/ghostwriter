@@ -93,14 +93,9 @@ OutlineWidget::OutlineWidget(MarkdownEditor *editor, QWidget *parent)
         &OutlineWidget::updateCurrentNavigationHeading
     );
 
-    this->connect
-    (
-        editor->document(),
-        &MarkdownDocument::contentsChange,
-        [d](int, int, int) {
-            d->reloadOutline();
-        }
-    );
+    this->connect(editor, &MarkdownEditor::markdownAstChanged, this, [d]() {
+        d->reloadOutline();
+    });
 }
 
 OutlineWidget::~OutlineWidget()

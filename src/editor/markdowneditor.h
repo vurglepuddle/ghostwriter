@@ -213,6 +213,12 @@ signals:
     void typingPausedScaled();
 
     /**
+     * Emitted after the Markdown AST has been replaced with a parse of the
+     * current document text.
+     */
+    void markdownAstChanged();
+
+    /**
      * Emitted when the cursor position in the editor has changed.
      * The new position is passed as a parameter.
      */

@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(markdowneditortest VERSION 1.0.0 LANGUAGES CXX)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Test Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Concurrent Core Gui Test Widgets)
 
 qt_standard_project_setup()
 
@@ -34,6 +34,7 @@ ecm_add_test(
     ../../src/markdown/memoryarena.cpp
     LINK_LIBRARIES
         PRIVATE
+            Qt::Concurrent
             Qt::Core
             Qt::Gui
             Qt::Test

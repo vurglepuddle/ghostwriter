@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QContextMenuEvent>
+#include <QElapsedTimer>
 #include <QList>
 #include <QMenu>
 #include <QStringList>
@@ -60,6 +61,9 @@ public:
     Sonnet::Speller *speller;
     QColor errorColor;
     SpellCheckDialog *spellCheckDialog;
+    QTimer *rehighlightTimer;
+    mutable QTextBlock nextRehighlightBlock;
+    mutable bool rehighlightInProgress;
 
     QMenu * createContextMenu();
 
@@ -70,6 +74,8 @@ public:
     QString getMisspelledWordAtCursor(QTextCursor &cursorForWord) const;
 
     void onContentsChanged(int position, int charsRemoved, int charsAdded);
+    void scheduleRehighlight() const;
+    void processRehighlightChunk();
     void spellCheckBlock(QTextBlock &block) const;
     void clearSpellCheckFormatting(QTextBlock &block) const;
     Positions wordBreaks(const QString &text) const;
@@ -106,6 +112,16 @@ SpellCheckDecorator::SpellCheckDecorator(QPlainTextEdit *editor)
     );
 
     d->speller = new Sonnet::Speller();
+    d->rehighlightInProgress = false;
+    d->rehighlightTimer = new QTimer(this);
+    d->rehighlightTimer->setSingleShot(true);
+    connect(d->rehighlightTimer, &QTimer::timeout, this, [d]() {
+        d->processRehighlightChunk();
+    });
+
+    if (MarkdownEditor *markdownEditor = qobject_cast<MarkdownEditor *>(d->editor)) {
+        connect(markdownEditor, &MarkdownEditor::markdownAstChanged, this, &SpellCheckDecorator::rehighlight);
+    }
 }
 
 SpellCheckDecorator::~SpellCheckDecorator()
@@ -144,28 +160,7 @@ void SpellCheckDecorator::settingsChanged()
 void SpellCheckDecorator::rehighlight() const
 {
     Q_D(const SpellCheckDecorator);
-
-    QTextBlock block = d->editor->document()->begin();
-
-    // Clump the rehighlighting as a single "edit block" so that the
-    // contentsChange signal fires immediately after rehighlighting is complete
-    // rather than with the user's next edit operation, which would trigger
-    // rehighlighting for each block in the document.
-    //
-    QTextCursor cursor(d->editor->document());
-    cursor.beginEditBlock();
-
-    while (block.isValid()) {
-        d->clearSpellCheckFormatting(block);
-
-        if (d->settings->checkerEnabledByDefault()) {
-            d->spellCheckBlock(block);
-        }
-
-        block = block.next();
-    }
-
-    cursor.endEditBlock();
+    d->scheduleRehighlight();
 }
 
 bool SpellCheckDecorator::eventFilter(QObject *watched, QEvent *event)
@@ -404,6 +399,14 @@ void SpellCheckDecoratorPrivate::onContentsChanged(
         return;
     }
 
+    // Large inserts (file loads and multiline pastes) used to spell-check
+    // every inserted block before returning to the event loop. Process those
+    // documents in short chunks so the editor can paint and accept input.
+    if (rehighlightInProgress || ((charsRemoved + charsAdded) > 4096)) {
+        scheduleRehighlight();
+        return;
+    }
+
     int endPosition = position + charsAdded;
 
     if (charsRemoved > 0) {
@@ -429,6 +432,40 @@ void SpellCheckDecoratorPrivate::onContentsChanged(
     while (block.isValid() && (block.position() < endPosition)) {
         spellCheckBlock(block);
         block = block.next();
+    }
+}
+
+void SpellCheckDecoratorPrivate::scheduleRehighlight() const
+{
+    nextRehighlightBlock = editor->document()->begin();
+    rehighlightInProgress = true;
+    rehighlightTimer->start(0);
+}
+
+void SpellCheckDecoratorPrivate::processRehighlightChunk()
+{
+    QElapsedTimer budget;
+    budget.start();
+    int blocksProcessed = 0;
+
+    while (nextRehighlightBlock.isValid()
+        && (blocksProcessed < 64)
+        && (budget.elapsed() < 8)) {
+        QTextBlock block = nextRehighlightBlock;
+        nextRehighlightBlock = nextRehighlightBlock.next();
+        clearSpellCheckFormatting(block);
+
+        if (settings->checkerEnabledByDefault()) {
+            spellCheckBlock(block);
+        }
+
+        ++blocksProcessed;
+    }
+
+    if (nextRehighlightBlock.isValid()) {
+        rehighlightTimer->start(0);
+    } else {
+        rehighlightInProgress = false;
     }
 }
 

@@ -8,6 +8,7 @@
 #define REMOTE_CONTENT_INTERCEPTOR_H
 
 #include <atomic>
+#include <functional>
 
 #include <QUrl>
 #include <QWebEngineUrlRequestInfo>
@@ -23,16 +24,16 @@ namespace ghostwriter
  */
 class RemoteContentInterceptor : public QWebEngineUrlRequestInterceptor
 {
-    Q_OBJECT
-
 public:
+    using BlockedCallback = std::function<void()>;
+
     enum class RequestPolicy {
         Allow,
         Block,
         BlockAndNotify,
     };
 
-    explicit RemoteContentInterceptor(QObject *parent = nullptr);
+    explicit RemoteContentInterceptor(BlockedCallback blockedCallback = {}, QObject *parent = nullptr);
 
     void interceptRequest(QWebEngineUrlRequestInfo &info) override;
 
@@ -44,10 +45,8 @@ public:
     static bool isLoadableRemoteResource(QWebEngineUrlRequestInfo::ResourceType resourceType);
     static RequestPolicy requestPolicy(const QUrl &url, QWebEngineUrlRequestInfo::ResourceType resourceType, bool remoteContentAllowed);
 
-signals:
-    void loadableRemoteContentBlocked();
-
 private:
+    BlockedCallback m_blockedCallback;
     std::atomic_bool m_remoteContentAllowed{false};
     std::atomic_bool m_blockedLoadableContent{false};
     std::atomic_bool m_blockNotificationSent{false};

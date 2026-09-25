@@ -82,6 +82,8 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
     focusModeEnabled = false;
     sidebarHiddenForResize = false;
     htmlPreviewVisibleBeforeBlindDraft = false;
+    documentLoadAwaitingStatistics = false;
+    htmlPreview = nullptr;
     appSettings = AppSettings::instance();
 
     // Text viewport-margin and cursor-scroll updates can be expensive for a
@@ -135,14 +137,23 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
     connect(appSettings, &AppSettings::previewCodeFontChanged, this, &MainWindow::applyTheme);
 
     connect(documentManager, &DocumentManager::documentLoaded, documentManager, [this]() {
-        sessionStats->startNewSession(documentStats->wordCount());
+        documentLoadAwaitingStatistics = true;
+        documentStats->scheduleUpdate();
         refreshRecentFiles();
 
         folderViewWidget->reloadFolderViewFromPath(documentManager->document()->filePath(), appSettings->folderViewShowAllFilesEnabled());
     });
 
     connect(documentManager, &DocumentManager::documentClosed, documentManager, [this]() {
+        documentLoadAwaitingStatistics = false;
         sessionStats->startNewSession(0);
+    });
+
+    connect(documentStats, &DocumentStatistics::statisticsRecalculated, this, [this](int totalWordCount) {
+        if (documentLoadAwaitingStatistics) {
+            sessionStats->startNewSession(totalWordCount);
+            documentLoadAwaitingStatistics = false;
+        }
     });
 
     connect(folderViewWidget, &FolderViewWidget::fileSelected, documentManager, [this](const QString &filePath) {
@@ -311,7 +322,9 @@ void MainWindow::quitApplication()
 
         this->editor->document()->disconnect();
         this->editor->disconnect();
-        this->htmlPreview->disconnect();
+        if (this->htmlPreview) {
+            this->htmlPreview->disconnect();
+        }
         StyleSheetBuilder::clearCache();
 
         qApp->quit();
@@ -341,8 +354,19 @@ void MainWindow::openPreferencesDialog()
 
 void MainWindow::toggleHtmlPreview(bool checked)
 {
-    htmlPreview->setVisible(checked);
-    htmlPreview->updatePreview();
+    if (checked && !htmlPreview) {
+        ensureHtmlPreview();
+        applyTheme();
+    }
+
+    if (htmlPreview) {
+        htmlPreview->setVisible(checked);
+
+        if (checked) {
+            htmlPreview->updatePreview();
+        }
+    }
+
     appSettings->setHtmlPreviewVisible(checked);
     this->update();
     adjustEditor();
@@ -366,14 +390,19 @@ void MainWindow::toggleBlindDraftMode(bool checked)
     editor->setBlindDraftModeEnabled(checked);
 
     if (checked) {
-        htmlPreviewVisibleBeforeBlindDraft = htmlPreview->isVisible();
-        htmlPreview->setVisible(false);
+        htmlPreviewVisibleBeforeBlindDraft = htmlPreview && htmlPreview->isVisible();
+
+        if (htmlPreview) {
+            htmlPreview->setVisible(false);
+        }
+
         appAction(AppActions::Preview)->setEnabled(false);
     } else {
         appAction(AppActions::Preview)->setEnabled(true);
-        htmlPreview->setVisible(htmlPreviewVisibleBeforeBlindDraft);
 
         if (htmlPreviewVisibleBeforeBlindDraft) {
+            ensureHtmlPreview();
+            htmlPreview->setVisible(true);
             htmlPreview->updatePreview();
         }
     }
@@ -995,28 +1024,6 @@ void MainWindow::setupGui()
     setupMenuBar();
     setupStatusBar();
 
-    // Note that the parent widget for this new window must be NULL, so that
-    // it will hide beneath other windows when it is deactivated.
-    //
-    htmlPreview = new HtmlPreview(documentManager->document(), appSettings->currentHtmlExporter(), this);
-
-    connect(editor, &MarkdownEditor::typingPausedScaled, htmlPreview, &HtmlPreview::updatePreview);
-
-    connect(documentManager, &DocumentManager::documentLoaded, htmlPreview, &HtmlPreview::resetRemoteContentPermission);
-
-    connect(documentManager, &DocumentManager::documentLoaded, htmlPreview, &HtmlPreview::updatePreview);
-
-    connect(documentManager, &DocumentManager::documentClosed, htmlPreview, &HtmlPreview::resetRemoteContentPermission);
-
-    connect(documentManager, &DocumentManager::documentClosed, htmlPreview, &HtmlPreview::updatePreview);
-
-    connect(outlineWidget, &OutlineWidget::headingNumberNavigated, htmlPreview, &HtmlPreview::navigateToHeading);
-    connect(appSettings, &AppSettings::currentHtmlExporterChanged, htmlPreview, &HtmlPreview::setHtmlExporter);
-
-    htmlPreview->setMinimumWidth(0.1 * qApp->primaryScreen()->size().width());
-    htmlPreview->setObjectName("htmlpreview");
-    htmlPreview->setVisible(appSettings->htmlPreviewVisible());
-
     // Set dimensions for the main window.  This is best done before
     // building the status bar, so that we can determine whether the full
     // screen button should be checked.
@@ -1033,18 +1040,15 @@ void MainWindow::setupGui()
     splitter = new QSplitter(this);
     splitter->addWidget(sidebar);
     splitter->addWidget(editor);
-    splitter->addWidget(htmlPreview);
     splitter->setChildrenCollapsible(false);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 2);
-    splitter->setStretchFactor(2, 1);
 
     // Set default sizes for splitter.
     QList<int> sizes;
     int sidebarWidth = width() * 0.2;
-    int otherWidth = (width() - sidebarWidth) / 2;
+    int otherWidth = width() - sidebarWidth;
     sizes.append(sidebarWidth);
-    sizes.append(otherWidth);
     sizes.append(otherWidth);
 
     splitter->setSizes(sizes);
@@ -1061,6 +1065,39 @@ void MainWindow::setupGui()
     });
 
     setCentralWidget(splitter);
+
+    // QtWebEngine is by far the heaviest startup dependency. Do not create it
+    // unless Live Preview was explicitly left enabled or the user turns it on.
+    if (appSettings->htmlPreviewVisible()) {
+        ensureHtmlPreview();
+    }
+}
+
+void MainWindow::ensureHtmlPreview()
+{
+    if (htmlPreview) {
+        return;
+    }
+
+    htmlPreview = new HtmlPreview(documentManager->document(), appSettings->currentHtmlExporter(), this);
+
+    connect(editor, &MarkdownEditor::typingPausedScaled, htmlPreview, &HtmlPreview::updatePreview);
+    connect(documentManager, &DocumentManager::documentLoaded, htmlPreview, &HtmlPreview::resetRemoteContentPermission);
+    connect(documentManager, &DocumentManager::documentLoaded, htmlPreview, &HtmlPreview::updatePreview);
+    connect(documentManager, &DocumentManager::documentClosed, htmlPreview, &HtmlPreview::resetRemoteContentPermission);
+    connect(documentManager, &DocumentManager::documentClosed, htmlPreview, &HtmlPreview::updatePreview);
+    connect(outlineWidget, &OutlineWidget::headingNumberNavigated, htmlPreview, &HtmlPreview::navigateToHeading);
+    connect(appSettings, &AppSettings::currentHtmlExporterChanged, htmlPreview, &HtmlPreview::setHtmlExporter);
+
+    htmlPreview->setMinimumWidth(0.1 * qApp->primaryScreen()->size().width());
+    htmlPreview->setObjectName("htmlpreview");
+    htmlPreview->setVisible(appSettings->htmlPreviewVisible());
+    splitter->addWidget(htmlPreview);
+    splitter->setStretchFactor(2, 1);
+
+    const int sidebarWidth = sidebar->isVisible() ? sidebar->width() : 0;
+    const int otherWidth = qMax(1, (width() - sidebarWidth) / 2);
+    splitter->setSizes({sidebarWidth, otherWidth, otherWidth});
 }
 
 void MainWindow::setupMenuBar()
@@ -1464,7 +1501,9 @@ void MainWindow::adjustEditor()
         sidebarWidth = sidebar->width();
     }
 
-    htmlPreview->setMaximumWidth((width - sidebarWidth) / 2);
+    if (htmlPreview) {
+        htmlPreview->setMaximumWidth((width - sidebarWidth) / 2);
+    }
 
     // Resize the editor's margins.
     editor->setupPaperMargins();
@@ -1523,12 +1562,14 @@ void MainWindow::applyTheme()
         qApp->style()->polish(this);
     }
 
-    styleSheet = styler.htmlPreviewStyleSheet();
+    if (htmlPreview) {
+        styleSheet = styler.htmlPreviewStyleSheet();
 
-    if (styleSheet.isNull()) {
-        qCritical() << "Invalid HTML preview style sheet provided.";
-    } else {
-        htmlPreview->setStyleSheet(styler.htmlPreviewStyleSheet());
+        if (styleSheet.isNull()) {
+            qCritical() << "Invalid HTML preview style sheet provided.";
+        } else {
+            htmlPreview->setStyleSheet(styleSheet);
+        }
     }
 
     adjustEditor();

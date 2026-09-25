@@ -30,8 +30,17 @@ public:
     }
 
     static ExporterFactory *instance;
+    Exporter *builtInExporter;
     QList<Exporter *> fileExporters;
     QList<Exporter *> htmlExporters;
+    bool externalExportersDiscovered;
+
+    /*
+     * Looks for pandoc, MultiMarkdown and cmark, which runs each of them
+     * (i.e., starts a process per program and waits for it), so this is
+     * only done the first time an external exporter is actually needed.
+     */
+    void discoverExternalExporters();
 
     /*
     * Executes the given terminal command to see if the executable is
@@ -84,21 +93,36 @@ ExporterFactory *ExporterFactory::instance()
 QList<Exporter *> ExporterFactory::fileExporters()
 {
     Q_D(ExporterFactory);
-    
+
+    d->discoverExternalExporters();
     return d->fileExporters;
 }
 
 QList<Exporter *> ExporterFactory::htmlExporters()
 {
     Q_D(ExporterFactory);
-    
+
+    d->discoverExternalExporters();
     return d->htmlExporters;
+}
+
+Exporter *ExporterFactory::defaultHtmlExporter()
+{
+    Q_D(ExporterFactory);
+
+    return d->builtInExporter;
 }
 
 Exporter *ExporterFactory::exporterByName(const QString &name)
 {
     Q_D(ExporterFactory);
-    
+
+    if (d->builtInExporter->name() == name) {
+        return d->builtInExporter;
+    }
+
+    d->discoverExternalExporters();
+
     // Search in HTML exporter list first.
     for (Exporter *exporter : d->htmlExporters) {
         if (exporter->name() == name) {
@@ -126,15 +150,25 @@ ExporterFactory::ExporterFactory()
     : d_ptr(new ExporterFactoryPrivate())
 {
     Q_D(ExporterFactory);
-    
-    CommandLineExporter *exporter = nullptr;
-    QVersionNumber pandocVersion = d->isCommandAvailable("pandoc", QStringList("--version"));
-    QVersionNumber mmdVersion = d->isCommandAvailable("multimarkdown", QStringList("--version"));
-    QVersionNumber cmarkVersion = d->isCommandAvailable("cmark", QStringList("--version"));
 
-    CmarkGfmExporter *cmarkGfmExporter = new CmarkGfmExporter();
-    d->fileExporters.append(cmarkGfmExporter);
-    d->htmlExporters.append(cmarkGfmExporter);
+    d->builtInExporter = new CmarkGfmExporter();
+    d->fileExporters.append(d->builtInExporter);
+    d->htmlExporters.append(d->builtInExporter);
+    d->externalExportersDiscovered = false;
+}
+
+void ExporterFactoryPrivate::discoverExternalExporters()
+{
+    if (externalExportersDiscovered) {
+        return;
+    }
+
+    externalExportersDiscovered = true;
+
+    CommandLineExporter *exporter = nullptr;
+    QVersionNumber pandocVersion = isCommandAvailable("pandoc", QStringList("--version"));
+    QVersionNumber mmdVersion = isCommandAvailable("multimarkdown", QStringList("--version"));
+    QVersionNumber cmarkVersion = isCommandAvailable("cmark", QStringList("--version"));
 
     if (!pandocVersion.isNull()) {
         int majorVersion = pandocVersion.majorVersion();
@@ -142,17 +176,17 @@ ExporterFactory::ExporterFactory()
 
         // Check version of Pandoc. Drop support for version 1.
         if (majorVersion >= 2) {
-            d->addPandocExporter("Pandoc", "markdown",  majorVersion, minorVersion);
+            addPandocExporter("Pandoc", "markdown", majorVersion, minorVersion);
 
             if ((majorVersion > 1) ||
                 ((1 == majorVersion) && (minorVersion >= 14))) {
-                d->addPandocExporter("Pandoc CommonMark", "commonmark",  majorVersion, minorVersion);
+                addPandocExporter("Pandoc CommonMark", "commonmark", majorVersion, minorVersion);
             }
 
-            d->addPandocExporter("Pandoc GitHub-flavored Markdown", "markdown_github-hard_line_breaks",  majorVersion, minorVersion);
-            d->addPandocExporter("Pandoc PHP Markdown Extra", "markdown_phpextra",  majorVersion, minorVersion);
-            d->addPandocExporter("Pandoc MultiMarkdown", "markdown_mmd", majorVersion, minorVersion);
-            d->addPandocExporter("Pandoc Strict", "markdown_strict",  majorVersion, minorVersion);
+            addPandocExporter("Pandoc GitHub-flavored Markdown", "markdown_github-hard_line_breaks", majorVersion, minorVersion);
+            addPandocExporter("Pandoc PHP Markdown Extra", "markdown_phpextra", majorVersion, minorVersion);
+            addPandocExporter("Pandoc MultiMarkdown", "markdown_mmd", majorVersion, minorVersion);
+            addPandocExporter("Pandoc Strict", "markdown_strict", majorVersion, minorVersion);
         }
         else {
             qWarning() << "Version" << pandocVersion << "of pandoc is unsupported.";
@@ -241,8 +275,8 @@ ExporterFactory::ExporterFactory()
             .arg(CommandLineExporter::SMART_TYPOGRAPHY_ARG)
             .arg(CommandLineExporter::OUTPUT_FILE_PATH_VAR)
         );
-        d->fileExporters.append(exporter);
-        d->htmlExporters.append(exporter);
+        fileExporters.append(exporter);
+        htmlExporters.append(exporter);
     }
 
     if (!cmarkVersion.isNull()) {
@@ -268,8 +302,8 @@ ExporterFactory::ExporterFactory()
             QString("cmark -t man %1")
             .arg(CommandLineExporter::SMART_TYPOGRAPHY_ARG)
         );
-        d->fileExporters.append(exporter);
-        d->htmlExporters.append(exporter);
+        fileExporters.append(exporter);
+        htmlExporters.append(exporter);
     }
 }
 

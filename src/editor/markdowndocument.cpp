@@ -27,6 +27,7 @@ public:
     bool readOnlyFlag;
     QDateTime timestamp;
     MarkdownAST *ast;
+    bool astCurrent;
 
     MarkdownDocument *q_ptr;
 
@@ -147,6 +148,21 @@ void MarkdownDocument::setMarkdownAST(MarkdownAST *ast)
     }
 
     d->ast = ast;
+    d->astCurrent = true;
+}
+
+bool MarkdownDocument::isMarkdownAstCurrent() const
+{
+    Q_D(const MarkdownDocument);
+
+    return d->astCurrent;
+}
+
+void MarkdownDocument::markMarkdownAstStale()
+{
+    Q_D(MarkdownDocument);
+
+    d->astCurrent = false;
 }
 
 void MarkdownDocument::clear()
@@ -168,5 +184,6 @@ void MarkdownDocumentPrivate::initializeUntitledDocument()
     this->displayName = MarkdownDocument::tr("untitled");
     this->timestamp = QDateTime::currentDateTime();
     this->ast = nullptr;
+    this->astCurrent = false;
 }
 } // namespace ghostwriter

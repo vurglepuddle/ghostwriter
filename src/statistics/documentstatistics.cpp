@@ -52,7 +52,15 @@ public:
     int readTimeMinutes;
     QTimer *updateTimer;
 
+    // Selection statistics are computed once selecting pauses briefly,
+    // rather than on every mouse move while dragging a selection.
+    QTimer *selectionTimer;
+    QString selectedText;
+    int selectionStart;
+    int selectionEnd;
+
     void updateStatistics();
+    void updateSelectionStatistics();
     void recalculateStatistics();
     void updateBlockStatistics(QTextBlock &block);
     void countWords
@@ -84,11 +92,23 @@ DocumentStatistics::DocumentStatistics(MarkdownDocument *document, QObject *pare
     d->pageCount = 0;
     d->lixLongWordCount = 0;
     d->readTimeMinutes = 0;
+
+    // Statistics are not needed while the user is typing; recount once
+    // typing pauses.  Only blocks whose text changed are recounted.
     d->updateTimer = new QTimer(this);
     d->updateTimer->setSingleShot(true);
-    d->updateTimer->setInterval(100);
+    d->updateTimer->setInterval(750);
     connect(d->updateTimer, &QTimer::timeout, this, [d]() {
         d->recalculateStatistics();
+    });
+
+    d->selectionStart = 0;
+    d->selectionEnd = 0;
+    d->selectionTimer = new QTimer(this);
+    d->selectionTimer->setSingleShot(true);
+    d->selectionTimer->setInterval(120);
+    connect(d->selectionTimer, &QTimer::timeout, this, [d]() {
+        d->updateSelectionStatistics();
     });
 
     connect(d->document, SIGNAL(contentsChange(int, int, int)), this, SLOT(onTextChanged(int, int, int)));
@@ -162,28 +182,32 @@ void DocumentStatistics::onTextSelected
 )
 {
     Q_D(DocumentStatistics);
-    
+
+    d->selectedText = selectedText;
+    d->selectionStart = selectionStart;
+    d->selectionEnd = selectionEnd;
+    d->selectionTimer->start();
+}
+
+void DocumentStatisticsPrivate::updateSelectionStatistics()
+{
+    Q_Q(DocumentStatistics);
+
     int selectionWordCount;
     int selectionLixLongWordCount;
     int selectionWordCharacterCount;
 
-    d->countWords
-    (
-        selectedText,
-        selectionWordCount,
-        selectionLixLongWordCount,
-        selectionWordCharacterCount
-    );
+    countWords(selectedText, selectionWordCount, selectionLixLongWordCount, selectionWordCharacterCount);
 
-    int selectionSentenceCount = d->countSentences(selectedText);
+    int selectionSentenceCount = countSentences(selectedText);
 
     // Count the number of selected paragraphs.
     int selectedParagraphCount = 0;
 
-    QTextBlock block = d->document->findBlock(selectionStart);
-    QTextBlock end = d->document->findBlock(selectionEnd).next();
+    QTextBlock block = document->findBlock(selectionStart);
+    QTextBlock end = document->findBlock(selectionEnd).next();
 
-    while (block != end) {
+    while (block.isValid() && (block != end)) {
         TextBlockData *blockData = (TextBlockData *) block.userData();
 
         if ((nullptr != blockData) && (block.text().trimmed().length() > 0)) {
@@ -193,21 +217,23 @@ void DocumentStatistics::onTextSelected
         block = block.next();
     }
 
-    emit wordCountChanged(selectionWordCount);
-    emit characterCountChanged(selectedText.length());
-    emit sentenceCountChanged(selectionSentenceCount);
-    emit paragraphCountChanged(selectedParagraphCount);
-    emit pageCountChanged(d->calculatePageCount(selectionWordCount));
-    emit complexWordsChanged(d->calculateComplexWords(selectionWordCount, selectionLixLongWordCount));
-    emit readingTimeChanged(d->calculateReadingTime(selectionWordCount));
-    emit lixReadingEaseChanged(d->calculateLIX(selectionWordCount, selectionLixLongWordCount, selectionSentenceCount));
-    emit readabilityIndexChanged(d->calculateCLI(selectionWordCharacterCount, selectionWordCount, selectionSentenceCount));
+    emit q->wordCountChanged(selectionWordCount);
+    emit q->characterCountChanged(selectedText.length());
+    emit q->sentenceCountChanged(selectionSentenceCount);
+    emit q->paragraphCountChanged(selectedParagraphCount);
+    emit q->pageCountChanged(calculatePageCount(selectionWordCount));
+    emit q->complexWordsChanged(calculateComplexWords(selectionWordCount, selectionLixLongWordCount));
+    emit q->readingTimeChanged(calculateReadingTime(selectionWordCount));
+    emit q->lixReadingEaseChanged(calculateLIX(selectionWordCount, selectionLixLongWordCount, selectionSentenceCount));
+    emit q->readabilityIndexChanged(calculateCLI(selectionWordCharacterCount, selectionWordCount, selectionSentenceCount));
 }
 
 void DocumentStatistics::onTextDeselected()
 {
     Q_D(DocumentStatistics);
-    
+
+    d->selectionTimer->stop();
+    d->selectedText.clear();
     d->updateStatistics();
 }
 
@@ -238,16 +264,7 @@ void DocumentStatisticsPrivate::recalculateStatistics()
     lixLongWordCount = 0;
     readTimeMinutes = 0;
 
-    // Update the word counts of affected blocks.
-    //
-    QTextBlock startBlock = document->firstBlock();
-    QTextBlock endBlock = document->lastBlock();
-    QTextBlock block = startBlock;
-
-    updateBlockStatistics(block);
-
-    while (block != endBlock) {
-        block = block.next();
+    for (QTextBlock block = document->firstBlock(); block.isValid(); block = block.next()) {
         updateBlockStatistics(block);
     }
 
@@ -283,23 +300,28 @@ void DocumentStatisticsPrivate::updateBlockStatistics(QTextBlock &block)
         block.setUserData(blockData);
     }
 
-    countWords
-    (
-        block.text(),
-        blockData->wordCount,
-        blockData->lixLongWordCount,
-        blockData->alphaNumericCharacterCount
-    );
+    const QString text = block.text();
+    const size_t textHash = qHash(text);
+
+    // Reuse the counts from the last pass unless this block's text changed.
+    if (!blockData->statisticsValid || (blockData->statisticsTextHash != textHash)) {
+        countWords(text, blockData->wordCount, blockData->lixLongWordCount, blockData->alphaNumericCharacterCount);
+
+        blockData->sentenceCount = countSentences(text);
+        blockData->statisticsTextHash = textHash;
+        blockData->statisticsValid = true;
+    }
 
     wordCount += blockData->wordCount;
     lixLongWordCount += blockData->lixLongWordCount;
     wordCharacterCount += blockData->alphaNumericCharacterCount;
-
-    blockData->sentenceCount = countSentences(block.text());
     sentenceCount += blockData->sentenceCount;
 
-    if (block.text().trimmed().length() > 0) {
-        paragraphCount++;
+    for (const QChar ch : text) {
+        if (!ch.isSpace()) {
+            paragraphCount++;
+            break;
+        }
     }
 }
 

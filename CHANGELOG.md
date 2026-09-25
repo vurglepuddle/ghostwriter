@@ -16,10 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-* Live Preview and its Chromium runtime now load only when Preview is enabled.
+* Live Preview and its Chromium runtime now load only when Preview is enabled,
+  and, when Preview was left on, only after the editor and document are shown.
 * Large file loads, edits, and pastes no longer synchronously rebuild every
   derived view; Markdown parsing runs in the background, while statistics and
   spell checking are coalesced or processed in responsive chunks.
+* Typing, deleting, and pasting now update the editor within a few
+  milliseconds regardless of document size.  After a parse, only the lines
+  whose formatting actually changed are re-highlighted (visible lines first,
+  in small time slices), instead of the whole document.
+* Live spell checking no longer runs while typing.  It checks only changed
+  paragraphs once typing pauses, caches results per word, and chooses the
+  dictionary by writing script, only guessing the language when dictionaries
+  for several languages in the same script are installed.
+* Document statistics are recounted only for changed paragraphs, once typing
+  pauses; the outline is not rebuilt while it is hidden.
+* Live Preview now replaces only the changed parts of the rendered page,
+  updates after a short pause in typing, and loads MathJax only when the
+  selected exporter supports math.  React is no longer used.
+* External exporters (Pandoc, MultiMarkdown, cmark) are looked for only when
+  first needed rather than at startup.
 
 ### Fixed
 
@@ -32,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Windows builds now embed the application icon in the executable.
 * Reduced resize repaint lag and fixed the sidebar-specific white flash when it
   automatically hides or reappears.
+* Pressing Enter or joining lines no longer re-highlights the rest of the
+  document with misaligned formatting until the next parse.
+* Opening or closing a code fence now re-highlights every affected line, even
+  past fences whose appearance does not change.
 
 ## [24.08.0]
 

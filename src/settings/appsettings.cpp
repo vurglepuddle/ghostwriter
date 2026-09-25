@@ -880,7 +880,7 @@ AppSettings::AppSettings()
     }
 
     if (!d->currentHtmlExporter) {
-        d->currentHtmlExporter = ExporterFactory::instance()->htmlExporters().first();
+        d->currentHtmlExporter = ExporterFactory::instance()->defaultHtmlExporter();
     }
 }
 

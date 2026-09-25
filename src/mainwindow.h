@@ -114,6 +114,10 @@ private:
     QLabel *statusIndicator;
     TimeLabel *timeIndicator;
     HtmlPreview *htmlPreview;
+
+    // Compiled by applyTheme() so that a Live Preview created later can be
+    // styled without re-applying the whole application theme.
+    QString previewStyleSheet;
     FolderViewWidget *folderViewWidget = nullptr;
     OutlineWidget *outlineWidget;
     DocumentStatistics *documentStats;

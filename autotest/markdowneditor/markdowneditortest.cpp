@@ -15,9 +15,14 @@
 #include <QTextBlock>
 #include <QTextCursor>
 
+#include <QRandomGenerator>
+#include <QSyntaxHighlighter>
+#include <QTextLayout>
+
 #include "editor/colorscheme.h"
 #include "editor/markdowndocument.h"
 #include "editor/markdowneditor.h"
+#include "markdown/cmarkgfmapi.h"
 
 using namespace ghostwriter;
 
@@ -58,6 +63,69 @@ void moveToBlock(MarkdownEditor &editor, int blockNumber, bool atEnd = true)
     editor.navigateDocumentForLoad(cursor.position());
 }
 
+// Format applied by the highlighter at a position in the block.  Later
+// ranges take precedence, as when the layout draws them.
+QTextCharFormat formatAt(const QTextBlock &block, int position)
+{
+    QTextCharFormat format;
+
+    for (const QTextLayout::FormatRange &range : block.layout()->formats()) {
+        if ((position >= range.start) && (position < (range.start + range.length))) {
+            format.merge(range.format);
+        }
+    }
+
+    return format;
+}
+
+// Returns a description of the first block whose incrementally maintained
+// highlighting differs from highlighting everything from a fresh parse, or
+// an empty string if there is none.
+QString compareWithFullRehighlight(MarkdownEditor &editor, MarkdownDocument &document)
+{
+    QList<QList<QTextLayout::FormatRange>> formats;
+    QList<int> states;
+
+    for (QTextBlock block = document.firstBlock(); block.isValid(); block = block.next()) {
+        formats.append(block.layout()->formats());
+        states.append(block.userState());
+    }
+
+    document.setMarkdownAST(CmarkGfmAPI::instance()->parse(document.toPlainText(), false));
+    editor.highlighter()->rehighlight();
+
+    int number = 0;
+
+    for (QTextBlock block = document.firstBlock(); block.isValid(); block = block.next(), number++) {
+        if ((block.userState() != states.at(number)) || (block.layout()->formats() != formats.at(number))) {
+            auto describe = [](const QList<QTextLayout::FormatRange> &ranges) {
+                QStringList parts;
+
+                for (const QTextLayout::FormatRange &range : ranges) {
+                    parts.append(QString("[%1+%2 %3 w%4]")
+                                     .arg(range.start)
+                                     .arg(range.length)
+                                     .arg(range.format.foreground().color().name())
+                                     .arg(range.format.fontWeight()));
+                }
+
+                return parts.join(' ');
+            };
+
+            return QString(
+                       "block %1 (\"%2\", previous \"%3\"): state %4, expected %5; "
+                       "formats %6, expected %7")
+                .arg(number)
+                .arg(block.text(), block.previous().text())
+                .arg(states.at(number), 0, 16)
+                .arg(block.userState(), 0, 16)
+                .arg(describe(formats.at(number)), describe(block.layout()->formats()));
+        }
+    }
+
+    return QString();
+}
+
 int visibleBlockCount(const MarkdownEditor &editor)
 {
     int count = 0;
@@ -86,6 +154,11 @@ private slots:
     void resetsCurrentLineWhenLoadingDocument();
     void combinesWithFocusAndHemingwayModes();
     void updatesAstAfterDebouncedEdits();
+    void keepsFormattingInPlaceWhileAstIsStale();
+    void continuesListBeforeParseCatchesUp();
+    void incrementalHighlightingMatchesFullRehighlight();
+    void incrementalHighlightingSurvivesRandomEdits_data();
+    void incrementalHighlightingSurvivesRandomEdits();
 };
 
 void MarkdownEditorTest::enablesInExistingDocumentAndRestoresIt()
@@ -356,6 +429,187 @@ void MarkdownEditorTest::updatesAstAfterDebouncedEdits()
     QTRY_VERIFY_WITH_TIMEOUT(astChangedSpy.count() > 0, 2000);
     QVERIFY(document.markdownAST());
     QCOMPARE(document.markdownAST()->headings().size(), 2);
+}
+
+void MarkdownEditorTest::keepsFormattingInPlaceWhileAstIsStale()
+{
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.setPlainText("Some **bold** word");
+
+    const QTextBlock block = document.firstBlock();
+    const int boldPosition = block.text().indexOf("bold");
+    QCOMPARE(formatAt(block, boldPosition).fontWeight(), int(QFont::Bold));
+    QVERIFY(formatAt(block, 0).fontWeight() != int(QFont::Bold));
+
+    // Typing before the bold text must move its formatting along with it,
+    // even though the parser has not caught up yet.
+    QTextCursor cursor(&document);
+    cursor.insertText("Hello ");
+
+    QVERIFY(!document.isMarkdownAstCurrent());
+    QCOMPARE(formatAt(block, boldPosition + 6).fontWeight(), int(QFont::Bold));
+    QVERIFY(formatAt(block, boldPosition).fontWeight() != int(QFont::Bold));
+
+    QTRY_VERIFY_WITH_TIMEOUT(document.isMarkdownAstCurrent(), 2000);
+    QCOMPARE(formatAt(block, boldPosition + 6).fontWeight(), int(QFont::Bold));
+}
+
+void MarkdownEditorTest::continuesListBeforeParseCatchesUp()
+{
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.setPlainText("");
+    editor.show();
+    editor.setFocus();
+
+    // Press Enter straight after typing, before the background parse runs.
+    QTest::keyClicks(&editor, "- item");
+    QTest::keyClick(&editor, Qt::Key_Return);
+
+    QVERIFY(!document.isMarkdownAstCurrent());
+    QCOMPARE(document.toPlainText(), QString("- item\n- "));
+}
+
+void MarkdownEditorTest::incrementalHighlightingMatchesFullRehighlight()
+{
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.resize(600, 400);
+    editor.show();
+
+    QString text;
+
+    for (int i = 0; i < 6; i++) {
+        text += QStringLiteral(
+                    "Heading %1\n=========\n\n"
+                    "Some *emphasis that\nspans lines* and **strong** and `code`.\n\n"
+                    "- item\n  - nested *item*\n- [ ] task\n\n"
+                    "> quoted **text**\n> more\n\n"
+                    "```\nint x = 0;\n```\n\n"
+                    "| a | b |\n|---|---|\n| 1 | 2 |\n\n")
+                    .arg(i);
+    }
+
+    editor.setPlainText(text);
+
+    auto blockAt = [&](int number) {
+        return document.findBlockByNumber(number);
+    };
+
+    auto waitForParse = [&]() {
+        QTRY_VERIFY_WITH_TIMEOUT(document.isMarkdownAstCurrent(), 2000);
+        QTest::qWait(100);
+    };
+
+    // Typing in a paragraph and splitting it.
+    QTextCursor cursor(blockAt(4));
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    cursor.insertText(" more words");
+    cursor.insertText("\nnew line");
+    waitForParse();
+
+    // Joining lines several times without waiting in between.
+    for (int i = 0; i < 3; i++) {
+        QTextCursor join(blockAt(10 + i));
+        join.deletePreviousChar();
+    }
+
+    waitForParse();
+
+    // Opening a code fence turns everything after it into code...
+    QTextCursor fence(blockAt(20));
+    fence.insertText("```\n");
+    waitForParse();
+
+    // ...and closing it again turns it back.
+    QTextCursor closing(blockAt(26));
+    closing.insertText("```\n");
+    waitForParse();
+
+    // A multi-line paste and a deleted selection spanning several blocks.
+    QTextCursor paste(blockAt(40));
+    paste.insertText("Pasted *line*\n\n- one\n- two\n\nSetext\n---\n");
+
+    QTextCursor selection(blockAt(55));
+    selection.setPosition(blockAt(60).position() + 3, QTextCursor::KeepAnchor);
+    selection.removeSelectedText();
+
+    // An underline making the previous line a setext heading.
+    QTextCursor setext(blockAt(70));
+    setext.insertText("Now a heading\n===\n");
+    waitForParse();
+    QTest::qWait(300);
+
+    const QString mismatch = compareWithFullRehighlight(editor, document);
+    QVERIFY2(mismatch.isEmpty(), qPrintable(mismatch));
+}
+
+void MarkdownEditorTest::incrementalHighlightingSurvivesRandomEdits_data()
+{
+    QTest::addColumn<quint32>("seed");
+
+    for (quint32 seed : {20260925u, 9u, 1234567u}) {
+        QTest::newRow(qPrintable(QString::number(seed))) << seed;
+    }
+}
+
+void MarkdownEditorTest::incrementalHighlightingSurvivesRandomEdits()
+{
+    QFETCH(quint32, seed);
+
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.resize(600, 400);
+    editor.show();
+
+    QString text;
+
+    for (int i = 0; i < 4; i++) {
+        text += QStringLiteral(
+            "Heading\n=======\n\nSome *emphasis that\nspans lines* and **strong**.\n\n"
+            "- item\n  - nested\n- [ ] task\n\n> quote\n> more\n\n"
+            "```\ncode\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nplain text\n\n");
+    }
+
+    editor.setPlainText(text);
+
+    const QStringList fragments = {"```\n", "```", "- ",    "* ",    "1. ",         "> ",   "**",    "*",         "_",  "`",      "\n",
+                                   "\n\n",  "# ",  "===\n", "---\n", "| x | y |\n", "    ", "word ", "[link](x)", "~~", "- [ ] ", "<!-- c -->"};
+
+    QRandomGenerator rng(seed);
+
+    for (int step = 0; step < 60; step++) {
+        const int length = document.characterCount() - 1;
+        QTextCursor cursor(&document);
+        cursor.setPosition(rng.bounded(length + 1));
+
+        QString edit;
+
+        if ((rng.bounded(4) == 0) && (length > 10)) {
+            const int end = qMin(length, cursor.position() + 1 + int(rng.bounded(30)));
+            edit = QString("delete %1 to %2").arg(cursor.position()).arg(end);
+            cursor.setPosition(end, QTextCursor::KeepAnchor);
+            cursor.removeSelectedText();
+        } else {
+            QString fragment = fragments.at(rng.bounded(fragments.size()));
+            edit = QString("insert at %1").arg(cursor.position());
+            cursor.insertText(fragment);
+        }
+
+        // Sometimes let the parser catch up, sometimes keep editing.
+        if (rng.bounded(3) == 0) {
+            QTRY_VERIFY_WITH_TIMEOUT(document.isMarkdownAstCurrent(), 2000);
+        }
+
+        if ((step % 15) == 14) {
+            QTRY_VERIFY_WITH_TIMEOUT(document.isMarkdownAstCurrent(), 2000);
+            QTest::qWait(150);
+
+            const QString mismatch = compareWithFullRehighlight(editor, document);
+            QVERIFY2(mismatch.isEmpty(), qPrintable(QString("after step %1 (%2): %3").arg(step).arg(edit, mismatch)));
+        }
+    }
 }
 
 QTEST_MAIN(MarkdownEditorTest)

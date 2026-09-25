@@ -49,6 +49,12 @@ public:
      */
     Exporter *exporterByName(const QString &name);
 
+    /**
+     * Returns the built-in HTML exporter.  Unlike the other methods, this
+     * never needs to look for external exporter programs.
+     */
+    Exporter *defaultHtmlExporter();
+
 private:
     QScopedPointer<ExporterFactoryPrivate> d_ptr;
 

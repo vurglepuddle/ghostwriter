@@ -124,12 +124,10 @@ int main(int argc, char *argv[])
             "Everyone who provided translations, documentation, bug fixes, or new features over the years"),
         QString(),
         QString());
-    aboutData.addComponent("cmark-gfm", 
-        QCoreApplication::translate("main",
-            "An extended version of the C reference implementation of CommonMark"),
-        QString(),
-        "https://github.com/github/cmark-gfm");
-    aboutData.addComponent("React", QCoreApplication::translate("main", "A JavaScript library for building user interfaces"), QString(), "https://reactjs.org");
+    aboutData.addComponent("cmark-gfm",
+                           QCoreApplication::translate("main", "An extended version of the C reference implementation of CommonMark"),
+                           QString(),
+                           "https://github.com/github/cmark-gfm");
     aboutData.addComponent("MathJax", 
         QCoreApplication::translate("main",
             "A JavaScript display engine for mathematics"),

@@ -6,6 +6,7 @@
 
 #include <QtCore/qmath.h>
 #include <QTextBoundaryFinder>
+#include <QTimer>
 
 #include "documentstatistics.h"
 
@@ -49,8 +50,10 @@ public:
     int pageCount;
     int lixLongWordCount;
     int readTimeMinutes;
+    QTimer *updateTimer;
 
     void updateStatistics();
+    void recalculateStatistics();
     void updateBlockStatistics(QTextBlock &block);
     void countWords
     (
@@ -81,11 +84,18 @@ DocumentStatistics::DocumentStatistics(MarkdownDocument *document, QObject *pare
     d->pageCount = 0;
     d->lixLongWordCount = 0;
     d->readTimeMinutes = 0;
+    d->updateTimer = new QTimer(this);
+    d->updateTimer->setSingleShot(true);
+    d->updateTimer->setInterval(100);
+    connect(d->updateTimer, &QTimer::timeout, this, [d]() {
+        d->recalculateStatistics();
+    });
 
     connect(d->document, SIGNAL(contentsChange(int, int, int)), this, SLOT(onTextChanged(int, int, int)));
     connect(d->document,
         &MarkdownDocument::cleared,
         [d]() {
+            d->updateTimer->stop();
             d->wordCount = 0;
             d->wordCharacterCount = 0;
             d->sentenceCount = 0;
@@ -203,34 +213,46 @@ void DocumentStatistics::onTextDeselected()
 
 void DocumentStatistics::onTextChanged(int position, int charsRemoved, int charsAdded)
 {
-    Q_D(DocumentStatistics);
-
     Q_UNUSED(position)
     Q_UNUSED(charsRemoved)
     Q_UNUSED(charsAdded)
 
-    d->wordCount = 0;
-    d->wordCharacterCount = 0;
-    d->sentenceCount = 0;
-    d->paragraphCount = 0;
-    d->pageCount = 0;
-    d->lixLongWordCount = 0;
-    d->readTimeMinutes = 0;
+    scheduleUpdate();
+}
+
+void DocumentStatistics::scheduleUpdate()
+{
+    Q_D(DocumentStatistics);
+    d->updateTimer->start();
+}
+
+void DocumentStatisticsPrivate::recalculateStatistics()
+{
+    Q_Q(DocumentStatistics);
+
+    wordCount = 0;
+    wordCharacterCount = 0;
+    sentenceCount = 0;
+    paragraphCount = 0;
+    pageCount = 0;
+    lixLongWordCount = 0;
+    readTimeMinutes = 0;
 
     // Update the word counts of affected blocks.
     //
-    QTextBlock startBlock = d->document->firstBlock();
-    QTextBlock endBlock = d->document->lastBlock();
+    QTextBlock startBlock = document->firstBlock();
+    QTextBlock endBlock = document->lastBlock();
     QTextBlock block = startBlock;
 
-    d->updateBlockStatistics(block);
+    updateBlockStatistics(block);
 
     while (block != endBlock) {
         block = block.next();
-        d->updateBlockStatistics(block);
+        updateBlockStatistics(block);
     }
 
-    d->updateStatistics();
+    emit q->statisticsRecalculated(wordCount);
+    updateStatistics();
 }
 
 void DocumentStatisticsPrivate::updateStatistics()

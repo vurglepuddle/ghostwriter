@@ -18,9 +18,6 @@
 #include <QVBoxLayout>
 #include <QVariant>
 #include <QWebChannel>
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-#include <QWebEnginePermission>
-#endif
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
 #include <QWebEngineView>
@@ -136,7 +133,12 @@ HtmlPreview::HtmlPreview(MarkdownDocument *document, Exporter *exporter, QWidget
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
     d->profile->setPersistentPermissionsPolicy(QWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
 #endif
-    d->remoteContentInterceptor = new RemoteContentInterceptor(d->profile);
+    d->remoteContentInterceptor = new RemoteContentInterceptor([d]() {
+        if (d->remoteContentInterceptor->hasBlockedLoadableContent()
+            && !d->remoteContentInterceptor->remoteContentAllowed()) {
+            d->remoteContentMessage->animatedShow();
+        }
+    }, d->profile);
     d->profile->setUrlRequestInterceptor(d->remoteContentInterceptor);
 
     SandboxedWebPage *webPage = new SandboxedWebPage(d->profile, d->view);
@@ -174,9 +176,7 @@ HtmlPreview::HtmlPreview(MarkdownDocument *document, Exporter *exporter, QWidget
     d->view->page()->action(QWebEnginePage::ViewSource)->setVisible(false);
     d->view->page()->action(QWebEnginePage::SavePage)->setVisible(false);
 
-    this->connect(d->view, &QWebEngineView::loadFinished, [d](bool ok) {
-        d->onLoadFinished(ok);
-    });
+    connect(d->view, SIGNAL(loadFinished(bool)), this, SLOT(onViewLoadFinished(bool)));
 
     this->connect(d->view, &QWidget::customContextMenuRequested, [d](const QPoint &position) {
         d->showContextMenu(position);
@@ -185,26 +185,10 @@ HtmlPreview::HtmlPreview(MarkdownDocument *document, Exporter *exporter, QWidget
 
     this->connect(d->loadRemoteContentAction, &QAction::triggered, this, &HtmlPreview::allowRemoteContent);
 
-    this->connect(
-        d->remoteContentInterceptor,
-        &RemoteContentInterceptor::loadableRemoteContentBlocked,
+    connect(webPage,
+        SIGNAL(featurePermissionRequested(QUrl,QWebEnginePage::Feature)),
         this,
-        [d]() {
-            if (d->remoteContentInterceptor->hasBlockedLoadableContent() && !d->remoteContentInterceptor->remoteContentAllowed()) {
-                d->remoteContentMessage->animatedShow();
-            }
-        },
-        Qt::QueuedConnection);
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-    this->connect(webPage, &QWebEnginePage::permissionRequested, webPage, [](QWebEnginePermission permission) {
-        permission.deny();
-    });
-#else
-    this->connect(webPage, &QWebEnginePage::featurePermissionRequested, webPage, [webPage](const QUrl &securityOrigin, QWebEnginePage::Feature feature) {
-        webPage->setFeaturePermission(securityOrigin, feature, QWebEnginePage::PermissionDeniedByUser);
-    });
-#endif
+        SLOT(onFeaturePermissionRequested(QUrl)));
 
     d->headingTagExp.setPattern("^[Hh][1-6]$");
 
@@ -270,7 +254,7 @@ void HtmlPreview::updatePreview()
 
             if (!text.isNull() && !text.isEmpty()) {
                 d->updateInProgress = true;
-                QFuture<QString> future = QtConcurrent::run(&HtmlPreviewPrivate::exportToHtml, d->document->toPlainText(), d->exporter);
+                QFuture<QString> future = QtConcurrent::run(&HtmlPreviewPrivate::exportToHtml, text, d->exporter);
                 d->futureWatcher->setFuture(future);
             }
         }
@@ -323,6 +307,32 @@ void HtmlPreview::resetRemoteContentPermission()
 
     d->remoteContentInterceptor->setRemoteContentAllowed(false);
     d->remoteContentMessage->hide();
+}
+
+void HtmlPreview::onViewLoadFinished(bool ok)
+{
+    Q_D(HtmlPreview);
+    d->onLoadFinished(ok);
+}
+
+void HtmlPreview::onFeaturePermissionRequested(const QUrl &securityOrigin)
+{
+    Q_D(HtmlPreview);
+
+    // The legacy signal/slot form avoids importing WebEngine meta-object data
+    // at process startup. Deny every feature for the requesting origin; this
+    // includes the feature that caused the signal.
+QT_WARNING_PUSH
+QT_WARNING_DISABLE_DEPRECATED
+    for (int feature = QWebEnginePage::Notifications;
+         feature <= QWebEnginePage::LocalFontsAccess;
+         ++feature) {
+        d->view->page()->setFeaturePermission(
+            securityOrigin,
+            static_cast<QWebEnginePage::Feature>(feature),
+            QWebEnginePage::PermissionDeniedByUser);
+    }
+QT_WARNING_POP
 }
 
 void HtmlPreviewPrivate::onHtmlReady()

@@ -6,10 +6,15 @@
 
 #include "remotecontentinterceptor.h"
 
+#include <QMetaObject>
+
+#include <utility>
+
 namespace ghostwriter
 {
-RemoteContentInterceptor::RemoteContentInterceptor(QObject *parent)
+RemoteContentInterceptor::RemoteContentInterceptor(BlockedCallback blockedCallback, QObject *parent)
     : QWebEngineUrlRequestInterceptor(parent)
+    , m_blockedCallback(std::move(blockedCallback))
 {
 }
 
@@ -29,7 +34,11 @@ void RemoteContentInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
         bool expected = false;
 
         if (m_blockNotificationSent.compare_exchange_strong(expected, true)) {
-            emit loadableRemoteContentBlocked();
+            QMetaObject::invokeMethod(this, [this]() {
+                if (m_blockedCallback) {
+                    m_blockedCallback();
+                }
+            }, Qt::QueuedConnection);
         }
     }
 }

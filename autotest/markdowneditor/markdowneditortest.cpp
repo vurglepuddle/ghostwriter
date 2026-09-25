@@ -10,6 +10,7 @@
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QScopedPointer>
+#include <QSignalSpy>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -84,6 +85,7 @@ private slots:
     void limitsUndoRedoToCurrentDraftLine();
     void resetsCurrentLineWhenLoadingDocument();
     void combinesWithFocusAndHemingwayModes();
+    void updatesAstAfterDebouncedEdits();
 };
 
 void MarkdownEditorTest::enablesInExistingDocumentAndRestoresIt()
@@ -338,6 +340,22 @@ void MarkdownEditorTest::combinesWithFocusAndHemingwayModes()
     const QString afterBlindDraft = document.toPlainText();
     QTest::keyClick(&editor, Qt::Key_Backspace);
     QCOMPARE(document.toPlainText(), afterBlindDraft);
+}
+
+void MarkdownEditorTest::updatesAstAfterDebouncedEdits()
+{
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.setPlainText("# Before\nbody");
+    QSignalSpy astChangedSpy(&editor, &MarkdownEditor::markdownAstChanged);
+
+    QTextCursor cursor(&document);
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertText("\n## After");
+
+    QTRY_VERIFY_WITH_TIMEOUT(astChangedSpy.count() > 0, 2000);
+    QVERIFY(document.markdownAST());
+    QCOMPARE(document.markdownAST()->headings().size(), 2);
 }
 
 QTEST_MAIN(MarkdownEditorTest)

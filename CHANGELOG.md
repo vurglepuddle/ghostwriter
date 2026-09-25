@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Live Preview now blocks external images and media by default and offers a
   warning-bar action to load them temporarily for the current document.
 
+### Changed
+
+* Live Preview and its Chromium runtime now load only when Preview is enabled.
+* Large file loads, edits, and pastes no longer synchronously rebuild every
+  derived view; Markdown parsing runs in the background, while statistics and
+  spell checking are coalesced or processed in responsive chunks.
+
 ### Fixed
 
 * Issue #465799: Segmentation fault no longer occurs when .conf file is missing on first launch.

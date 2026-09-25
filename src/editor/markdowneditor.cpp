@@ -18,6 +18,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetricsF>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QImageReader>
 #include <QImageWriter>
@@ -42,6 +43,7 @@
 #include <QTextCursor>
 #include <QTimer>
 #include <QUrl>
+#include <QtConcurrentRun>
 
 #include "../markdown/cmarkgfmapi.h"
 
@@ -52,6 +54,12 @@
 
 namespace ghostwriter
 {
+
+struct MarkdownParseResult
+{
+    quint64 generation;
+    MarkdownAST *ast;
+};
 
 namespace
 {
@@ -145,6 +153,11 @@ public:
     // Timers used to determine when typing has paused.
     QTimer *typingTimer;
     QTimer *scaledTypingTimer;
+    QTimer *parseTimer;
+    QFutureWatcher<MarkdownParseResult> *parseWatcher;
+    quint64 parseGeneration;
+    quint64 handledParseGeneration;
+    bool parsePending;
 
     bool typingHasPaused;
     bool scaledTypingHasPaused;
@@ -162,7 +175,9 @@ public:
     bool loadingDocument;
 
     void toggleCursorBlink();
-    void parseDocument();
+    void scheduleDocumentParse();
+    void startDocumentParse();
+    void finishDocumentParse();
     void parseText(const QString &text);
 
     void handleCarriageReturn();
@@ -340,6 +355,21 @@ MarkdownEditor::MarkdownEditor
     );
     d->scaledTypingTimer->start(1000);
 
+    d->parseGeneration = 0;
+    d->handledParseGeneration = 0;
+    d->parsePending = false;
+    d->parseTimer = new QTimer(this);
+    d->parseTimer->setSingleShot(true);
+    d->parseTimer->setInterval(75);
+    connect(d->parseTimer, &QTimer::timeout, this, [d]() {
+        d->startDocumentParse();
+    });
+
+    d->parseWatcher = new QFutureWatcher<MarkdownParseResult>(this);
+    connect(d->parseWatcher, &QFutureWatcher<MarkdownParseResult>::finished, this, [d]() {
+        d->finishDocumentParse();
+    });
+
     this->setColorScheme(colors);
     d->textCursorVisible = true;
 
@@ -357,7 +387,22 @@ MarkdownEditor::MarkdownEditor
 
 MarkdownEditor::~MarkdownEditor()
 {
-    ;
+    Q_D(MarkdownEditor);
+
+    d->parseTimer->stop();
+
+    if (d->parseWatcher->isRunning()) {
+        d->parseWatcher->waitForFinished();
+    }
+
+    if (d->parseWatcher->future().isValid()
+        && (d->parseWatcher->future().resultCount() > 0)) {
+        MarkdownParseResult result = d->parseWatcher->result();
+
+        if (result.generation != d->handledParseGeneration) {
+            delete result.ast;
+        }
+    }
 }
 
 
@@ -664,6 +709,9 @@ void MarkdownEditor::setPlainText(const QString &text)
 {
     Q_D(MarkdownEditor);
 
+    d->parseTimer->stop();
+    ++d->parseGeneration;
+    d->parsePending = false;
     d->parseText(text);
     d->loadingDocument = true;
     d->typingHasPaused = true;
@@ -677,6 +725,8 @@ void MarkdownEditor::setPlainText(const QString &text)
     if (d->blindDraftModeEnabled) {
         d->commitBlindDraftLine();
     }
+
+    emit markdownAstChanged();
 }
 
 QLayout *MarkdownEditor::preferredLayout()
@@ -1965,13 +2015,15 @@ void MarkdownEditor::onContentsChanged(int position, int charsRemoved, int chars
             d->blindDraftRedoDepth = 0;
         }
 
-        if ((d->blindDraftBlockCount != this->document()->blockCount())
-            || !this->document()->findBlockByNumber(d->blindDraftBlockNumber).isValid()) {
+        if (!d->blindDraftNavigationAllowed
+            && !d->blindDraftUndoRedoInProgress
+            && ((d->blindDraftBlockCount != this->document()->blockCount())
+                || !this->document()->findBlockByNumber(d->blindDraftBlockNumber).isValid())) {
             d->updateBlindDraftVisibility();
         }
     }
 
-    d->parseDocument();
+    d->scheduleDocumentParse();
 
     // Don't use the textChanged() or contentsChanged() (no parameters) signals
     // for checking if the typingResumed() signal needs to be emitted.  These
@@ -2280,11 +2332,50 @@ void MarkdownEditorPrivate::toggleCursorBlink()
     q->update();
 }
 
-void MarkdownEditorPrivate::parseDocument()
+void MarkdownEditorPrivate::scheduleDocumentParse()
+{
+    ++parseGeneration;
+    parsePending = true;
+    parseTimer->start();
+}
+
+void MarkdownEditorPrivate::startDocumentParse()
 {
     Q_Q(MarkdownEditor);
 
-    parseText(q->document()->toPlainText());
+    if (parseWatcher->isRunning()) {
+        return;
+    }
+
+    const quint64 generation = parseGeneration;
+    const QString text = q->document()->toPlainText();
+    parsePending = false;
+
+    parseWatcher->setFuture(QtConcurrent::run([text, generation]() {
+        return MarkdownParseResult {
+            generation,
+            CmarkGfmAPI::instance()->parse(text, false)
+        };
+    }));
+}
+
+void MarkdownEditorPrivate::finishDocumentParse()
+{
+    Q_Q(MarkdownEditor);
+    MarkdownParseResult result = parseWatcher->result();
+    handledParseGeneration = result.generation;
+
+    if (result.generation == parseGeneration) {
+        static_cast<MarkdownDocument *>(q->document())->setMarkdownAST(result.ast);
+        highlighter->rehighlight();
+        emit q->markdownAstChanged();
+    } else {
+        delete result.ast;
+    }
+
+    if (parsePending) {
+        parseTimer->start(0);
+    }
 }
 
 void MarkdownEditorPrivate::parseText(const QString &text)

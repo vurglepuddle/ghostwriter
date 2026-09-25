@@ -52,6 +52,11 @@ public:
 
 signals:
     /**
+     * Emitted after a complete document statistics pass has finished.
+     */
+    void statisticsRecalculated(int totalWordCount);
+
+    /**
      * Emitted when word count changes.  May be word count
      * of entire document or of selected text.
      */
@@ -104,6 +109,11 @@ signals:
     void readabilityIndexChanged(int value);
 
 public slots:
+    /**
+     * Coalesces a complete statistics pass after document edits settle.
+     */
+    void scheduleUpdate();
+
     /**
      * Recalculates statistics text selected in the document's editor.
      */

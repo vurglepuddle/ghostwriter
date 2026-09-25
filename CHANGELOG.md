@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected exporter supports math.  React is no longer used.
 * External exporters (Pandoc, MultiMarkdown, cmark) are looked for only when
   first needed rather than at startup.
+* The window now appears as soon as it is built and themed, with the last
+  document shown right after.  Spell checking dictionaries, the folder view,
+  and Live Preview load only once the document is on screen.
 
 ### Fixed
 
@@ -52,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   document with misaligned formatting until the next parse.
 * Opening or closing a code fence now re-highlights every affected line, even
   past fences whose appearance does not change.
+* Opening a file from another folder, including the last session's file at
+  startup, no longer loads it twice.  The folder view mistook its own
+  selection of the open file for the user choosing it.
 
 ## [24.08.0]
 

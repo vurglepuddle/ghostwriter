@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QContextMenuEvent>
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QList>
@@ -157,6 +158,10 @@ public:
     bool passWrapped;
     quint64 generation;
 
+    // When a check became due before the spell checker was loaded.
+    bool checkPending;
+    QDeadlineTimer pendingCheckDeadline;
+
     // Dictionaries and results, which are reused across blocks and passes.
     QHash<QString, Sonnet::Speller *> spellers;
     QHash<QString, QHash<QString, bool>> wordCache;
@@ -171,6 +176,7 @@ public:
     QLocale::Language defaultPrimaryLanguage;
     QHash<int, ScriptLanguages> languagesByScript;
 
+    void loadSettings();
     bool enabled() const;
     void invalidateAll();
     void scheduleCheck(int delayMs);
@@ -202,15 +208,14 @@ SpellCheckDecorator::SpellCheckDecorator(QPlainTextEdit *editor)
 {
     Q_D(SpellCheckDecorator);
 
-    if (nullptr == d->settings) {
-        d->settings = new Sonnet::Settings();
-    }
+    // Note: Sonnet's settings are loaded later (see loadSpellChecker()).
 
     d->editor = editor;
     d->highlighter = nullptr;
     d->spellCheckDialog = nullptr;
     d->passWrapped = false;
     d->generation = 1;
+    d->checkPending = false;
     d->languageMapBuilt = false;
     d->defaultPrimaryLanguage = QLocale::AnyLanguage;
 
@@ -258,6 +263,13 @@ QColor SpellCheckDecorator::errorColor() const
     return d->errorColor;
 }
 
+void SpellCheckDecorator::loadSpellChecker()
+{
+    Q_D(SpellCheckDecorator);
+
+    d->loadSettings();
+}
+
 void SpellCheckDecorator::setErrorColor(const QColor &color)
 {
     Q_D(SpellCheckDecorator);
@@ -288,6 +300,7 @@ void SpellCheckDecorator::rehighlight() const
 {
     SpellCheckDecoratorPrivate *d = const_cast<SpellCheckDecoratorPrivate *>(d_func());
 
+    d->loadSettings();
     d->invalidateAll();
 
     if (d->enabled()) {
@@ -302,9 +315,13 @@ bool SpellCheckDecorator::eventFilter(QObject *watched, QEvent *event)
     Q_D(SpellCheckDecorator);
     Q_UNUSED(watched);
 
-    if ((event->type() != QEvent::ContextMenu)
-            || !d->settings->checkerEnabledByDefault()
-            || d->editor->isReadOnly()) {
+    if (event->type() != QEvent::ContextMenu) {
+        return false;
+    }
+
+    d->loadSettings();
+
+    if (!d->settings->checkerEnabledByDefault() || d->editor->isReadOnly()) {
         return false;
     }
 
@@ -362,6 +379,21 @@ bool SpellCheckDecorator::eventFilter(QObject *watched, QEvent *event)
     return true;
 }
 
+void SpellCheckDecoratorPrivate::loadSettings()
+{
+    if (nullptr == settings) {
+        settings = new Sonnet::Settings();
+    }
+
+    if (checkPending) {
+        checkPending = false;
+
+        if (enabled()) {
+            scheduleCheck(int(pendingCheckDeadline.remainingTime()));
+        }
+    }
+}
+
 bool SpellCheckDecoratorPrivate::enabled() const
 {
     return (nullptr != highlighter) && settings->checkerEnabledByDefault();
@@ -385,13 +417,22 @@ void SpellCheckDecoratorPrivate::onContentsChanged(int position, int charsRemove
 {
     Q_UNUSED(position)
 
+    const int delayMs = ((charsRemoved + charsAdded) > 4096) ? LargeChangeDelayMs : IdleDelayMs;
+
+    // Until the spell checker is loaded, only remember when the check is due.
+    if (nullptr == settings) {
+        checkPending = true;
+        pendingCheckDeadline.setRemainingTime(delayMs);
+        return;
+    }
+
     if (!enabled()) {
         return;
     }
 
     // The highlighter has already shifted this block's known misspellings to
     // follow the edit.  Checking waits until typing pauses.
-    scheduleCheck(((charsRemoved + charsAdded) > 4096) ? LargeChangeDelayMs : IdleDelayMs);
+    scheduleCheck(delayMs);
 }
 
 void SpellCheckDecoratorPrivate::startPass()

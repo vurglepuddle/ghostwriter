@@ -130,6 +130,7 @@ private:
     bool focusModeEnabled;
     bool htmlPreviewVisibleBeforeBlindDraft;
     bool documentLoadAwaitingStatistics;
+    bool startupFinished;
     QTimer editorAdjustmentTimer;
     SvgIconTheme *primaryIconTheme;
     SvgIconTheme *secondaryIconTheme;
@@ -159,6 +160,7 @@ private:
     void setupStatusBar();
     void setupSidebar();
     void ensureHtmlPreview();
+    void finishStartup();
 
     void scheduleEditorAdjustment();
     void adjustEditor();

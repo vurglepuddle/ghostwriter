@@ -4,8 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <algorithm>
+
+#include <QHash>
 #include <QStack>
 #include <QTextStream>
+#include <QVector>
 #include <QtGlobal>
 
 #include <3rdparty/cmark-gfm/src/cmark-gfm.h>
@@ -28,7 +32,78 @@ public:
 
     MemoryArena<MarkdownNode> arena;
     MarkdownNode *root;
+
+    // Children of nodes with many children, for binary searching by line.
+    // Only built when the children are strictly ordered, non-overlapping
+    // block nodes, so that a search gives the same answer as a linear scan.
+    QHash<const MarkdownNode *, QVector<MarkdownNode *>> childIndex;
+
+    void buildChildIndex();
+    MarkdownNode *firstChildNear(const MarkdownNode *parent, int lineNumber) const;
 };
+
+namespace
+{
+constexpr int MinIndexedChildren = 8;
+}
+
+void MarkdownASTPrivate::buildChildIndex()
+{
+    childIndex.clear();
+
+    if (nullptr == root) {
+        return;
+    }
+
+    QStack<const MarkdownNode *> nodes;
+    nodes.push(root);
+
+    while (!nodes.isEmpty()) {
+        const MarkdownNode *node = nodes.pop();
+        QVector<MarkdownNode *> children;
+        bool indexable = true;
+
+        for (MarkdownNode *child = node->firstChild(); nullptr != child; child = child->next()) {
+            if (child->isBlockType()) {
+                nodes.push(child);
+            }
+
+            if (!child->isBlockType() || (MarkdownNode::TableCell == child->type()) || (child->endLine() <= 0)
+                || (!children.isEmpty() && (children.last()->endLine() >= child->startLine()))) {
+                indexable = false;
+            }
+
+            children.append(child);
+        }
+
+        if (indexable && (children.size() >= MinIndexedChildren)) {
+            childIndex.insert(node, children);
+        }
+    }
+}
+
+MarkdownNode *MarkdownASTPrivate::firstChildNear(const MarkdownNode *parent, int lineNumber) const
+{
+    auto it = childIndex.constFind(parent);
+
+    if (it == childIndex.constEnd()) {
+        return parent->firstChild();
+    }
+
+    const QVector<MarkdownNode *> &children = it.value();
+
+    // Last child starting at or before the line.  Earlier children end
+    // before it starts, so a linear scan would have skipped them anyway.
+    auto upper = std::upper_bound(children.cbegin(), children.cend(), lineNumber, [](int line, const MarkdownNode *node) {
+        return line < node->startLine();
+    });
+
+    if (upper == children.cbegin()) {
+        return children.first();
+    }
+
+    return *(upper - 1);
+}
 
 MarkdownAST::MarkdownAST()
     : d_ptr(new MarkdownASTPrivate())
@@ -64,6 +139,7 @@ void MarkdownAST::setRoot(cmark_node *root)
     Q_D(MarkdownAST);
     
     d->arena.freeAll();
+    d->childIndex.clear();
 
     if (nullptr == root) {
         d->root = nullptr;
@@ -98,6 +174,8 @@ void MarkdownAST::setRoot(cmark_node *root)
             source = cmark_node_next(source);
         }
     }
+
+    d->buildChildIndex();
 }
 
 MarkdownNode *MarkdownAST::findBlockAtLine(int lineNumber) const
@@ -109,7 +187,7 @@ MarkdownNode *MarkdownAST::findBlockAtLine(int lineNumber) const
     }
 
     MarkdownNode *candidate = nullptr;
-    MarkdownNode *current = d->root->firstChild();
+    MarkdownNode *current = d->firstChildNear(d->root, lineNumber);
 
     while
     (
@@ -140,12 +218,12 @@ MarkdownNode *MarkdownAST::findBlockAtLine(int lineNumber) const
                     (lineNumber == current->endLine())) {
                     current = current->next();
                 } else {
-                    current = current->firstChild();
+                    current = d->firstChildNear(current, lineNumber);
                 }
                 break;
             }
             default:
-                current = current->firstChild();
+                current = d->firstChildNear(current, lineNumber);
                 break;
             }
         } else if (current->startLine() > lineNumber) {
@@ -156,6 +234,27 @@ MarkdownNode *MarkdownAST::findBlockAtLine(int lineNumber) const
     }
 
     return candidate;
+}
+
+MarkdownNode *MarkdownAST::topLevelBlockAtLine(int lineNumber) const
+{
+    Q_D(const MarkdownAST);
+
+    if ((nullptr == d->root) || (MarkdownNode::Invalid == d->root->type())) {
+        return nullptr;
+    }
+
+    for (MarkdownNode *node = d->firstChildNear(d->root, lineNumber); nullptr != node; node = node->next()) {
+        if (node->startLine() > lineNumber) {
+            return nullptr;
+        }
+
+        if ((lineNumber <= node->endLine()) || (0 == node->endLine())) {
+            return node;
+        }
+    }
+
+    return nullptr;
 }
 
 QVector<MarkdownNode *> MarkdownAST::headings() const
@@ -186,6 +285,7 @@ void MarkdownAST::clear()
     Q_D(MarkdownAST);
     
     d->arena.freeAll();
+    d->childIndex.clear();
     d->root = nullptr;
 }
 

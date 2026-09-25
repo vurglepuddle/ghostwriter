@@ -36,6 +36,10 @@ public:
     OutlineWidget *q_ptr;
     QPointer<MarkdownEditor> editor;
 
+    // Set when the document's headings may have changed while the outline
+    // was hidden, in which case it is rebuilt when next shown.
+    bool outlineStale;
+
     /*
     * Invoked when the user selects one of the headings in the outline
     * in order to navigate to a different position in the document.
@@ -69,6 +73,8 @@ OutlineWidget::OutlineWidget(MarkdownEditor *editor, QWidget *parent)
 {
     Q_D(OutlineWidget);
 
+    d->outlineStale = true;
+
     this->connect
     (
         this,
@@ -93,14 +99,31 @@ OutlineWidget::OutlineWidget(MarkdownEditor *editor, QWidget *parent)
         &OutlineWidget::updateCurrentNavigationHeading
     );
 
-    this->connect(editor, &MarkdownEditor::markdownAstChanged, this, [d]() {
-        d->reloadOutline();
+    this->connect(editor, &MarkdownEditor::markdownAstChanged, this, [this, d]() {
+        d->outlineStale = true;
+
+        if (this->isVisible()) {
+            d->reloadOutline();
+        }
     });
 }
 
 OutlineWidget::~OutlineWidget()
 {
     ;
+}
+
+void OutlineWidget::showEvent(QShowEvent *event)
+{
+    Q_D(OutlineWidget);
+
+    QListWidget::showEvent(event);
+
+    if (d->outlineStale) {
+        d->reloadOutline();
+    } else if (d->editor) {
+        updateCurrentNavigationHeading(d->editor->textCursor().position());
+    }
 }
 
 void OutlineWidget::updateCurrentNavigationHeading(int position)
@@ -111,6 +134,12 @@ void OutlineWidget::updateCurrentNavigationHeading(int position)
     // Otherwise, application may crash on exit.
     //
     if (!d->editor) {
+        return;
+    }
+
+    // Called on every cursor movement; there is nothing to show while
+    // hidden, and showEvent() catches up.
+    if (!this->isVisible()) {
         return;
     }
 
@@ -139,13 +168,12 @@ void OutlineWidget::updateCurrentNavigationHeading(int position)
 
         if (row >= 0) {
             QListWidgetItem *itemToHighlight = this->item(row);
-            setCurrentItem(itemToHighlight);
-            this->scrollToItem
-            (
-                itemToHighlight,
-                QAbstractItemView::PositionAtCenter
-            );
-        } else {
+
+            if (itemToHighlight != currentItem()) {
+                setCurrentItem(itemToHighlight);
+                this->scrollToItem(itemToHighlight, QAbstractItemView::PositionAtCenter);
+            }
+        } else if (nullptr != currentItem()) {
             // Document position is before the first heading.  Deselect
             // any selected headings, and scroll to the top.
             //
@@ -181,21 +209,25 @@ void OutlineWidgetPrivate::reloadOutline()
         return;
     }
 
-    q->clear();
+    outlineStale = false;
 
-    if ((nullptr == editor) || (nullptr == editor->document())) {
+    if (nullptr == editor->document()) {
+        q->clear();
         return;
     }
 
     MarkdownAST *ast = ((MarkdownDocument *) editor->document())->markdownAST();
 
     if (nullptr == ast) {
+        q->clear();
         return;
     }
 
-    QVector<MarkdownNode *> headings = ast->headings();
+    static const QRegularExpression headingRegex("^\\s*#*(.*?)\\s*#*?\\s*$");
 
-    for (MarkdownNode *heading : headings) {
+    QVector<QPair<QString, int>> headings;
+
+    for (MarkdownNode *heading : ast->headings()) {
         QString headingText("   ");
 
         for (int i = 1; i < heading->headingLevel(); i++) {
@@ -203,8 +235,6 @@ void OutlineWidgetPrivate::reloadOutline()
         }
 
         QTextBlock block = editor->document()->findBlockByNumber(heading->startLine() - 1);
-
-        QRegularExpression headingRegex("^\\s*#*(.*?)\\s*#*?\\s*$");
         QRegularExpressionMatch match = headingRegex.match(block.text());
 
         if (match.isValid() && match.hasMatch()) {
@@ -212,9 +242,29 @@ void OutlineWidgetPrivate::reloadOutline()
         }
 
         if (block.isValid()) {
+            headings.append({headingText, block.position()});
+        }
+    }
+
+    // Typing usually leaves the headings as they are and only moves them, so
+    // update positions in place rather than rebuilding the list.
+    bool sameHeadings = (headings.size() == q->count());
+
+    for (int i = 0; sameHeadings && (i < headings.size()); i++) {
+        sameHeadings = (q->item(i)->text() == headings.at(i).first);
+    }
+
+    if (sameHeadings) {
+        for (int i = 0; i < headings.size(); i++) {
+            q->item(i)->setData(DOCUMENT_POSITION_ROLE, QVariant::fromValue(headings.at(i).second));
+        }
+    } else {
+        q->clear();
+
+        for (const QPair<QString, int> &heading : std::as_const(headings)) {
             QListWidgetItem *item = new QListWidgetItem();
-            item->setText(headingText);
-            item->setData(DOCUMENT_POSITION_ROLE, QVariant::fromValue(block.position()));
+            item->setText(heading.first);
+            item->setData(DOCUMENT_POSITION_ROLE, QVariant::fromValue(heading.second));
             q->insertItem(q->count(), item);
         }
     }

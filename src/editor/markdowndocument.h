@@ -87,7 +87,24 @@ public:
     void setTimestamp(const QDateTime &timestamp);
 
     MarkdownAST *markdownAST() const;
+
+    /**
+     * Replaces the AST (taking ownership of it) and marks it as matching the
+     * current document text.
+     */
     void setMarkdownAST(MarkdownAST *ast);
+
+    /**
+     * Returns whether the AST was parsed from the current document text.
+     * The AST becomes stale as soon as the text is edited and stays stale
+     * until a new parse result is installed with setMarkdownAST().
+     */
+    bool isMarkdownAstCurrent() const;
+
+    /**
+     * Marks the AST as no longer matching the document text.
+     */
+    void markMarkdownAstStale();
 
     /**
      * Overrides base class clear() method to send cleared() signal.

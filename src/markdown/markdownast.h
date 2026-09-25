@@ -68,6 +68,13 @@ public:
     MarkdownNode *findBlockAtLine(int lineNumber) const;
 
     /**
+     * Returns the top-level block node (a direct child of the document)
+     * spanning the given line number, or nullptr if the line is not part of
+     * any top-level block (i.e., it is a blank line between blocks).
+     */
+    MarkdownNode *topLevelBlockAtLine(int lineNumber) const;
+
+    /**
      * Returns a list of all nodes that are of type heading, excluding
      * those that are nested within block quotes or lists.
      */

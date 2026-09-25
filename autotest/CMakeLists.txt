@@ -12,5 +12,6 @@ add_subdirectory(bookmark)
 add_subdirectory(library)
 add_subdirectory(markdowneditor)
 add_subdirectory(remotecontent)
+add_subdirectory(typinglatency)
 
 enable_testing(true)

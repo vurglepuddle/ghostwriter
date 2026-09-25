@@ -48,6 +48,9 @@ public slots:
      */
     void updateCurrentNavigationHeading(int position);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private:
     QScopedPointer<OutlineWidgetPrivate> d_ptr;
 };

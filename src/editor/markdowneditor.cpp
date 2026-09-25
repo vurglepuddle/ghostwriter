@@ -9,8 +9,8 @@
 #include <algorithm>
 #include <math.h>
 
-#include <QApplication>
 #include <QAction>
+#include <QApplication>
 #include <QChar>
 #include <QColor>
 #include <QDateTime>
@@ -44,6 +44,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QtConcurrentRun>
+#include <QtMath>
 
 #include "../markdown/cmarkgfmapi.h"
 
@@ -149,6 +150,7 @@ public:
     QColor cursorColor;
     bool textCursorVisible;
     QTimer *cursorBlinkTimer;
+    QRect lastCursorArea;
 
     // Timers used to determine when typing has paused.
     QTimer *typingTimer;
@@ -175,6 +177,7 @@ public:
     bool loadingDocument;
 
     void toggleCursorBlink();
+    QRect cursorAreaRect() const;
     void scheduleDocumentParse();
     void startDocumentParse();
     void finishDocumentParse();
@@ -332,35 +335,31 @@ MarkdownEditor::MarkdownEditor
     d->typingPausedSignalSent = true;
     d->typingHasPaused = true;
 
+    // Both pause timers are single-shot and restarted by every edit, so they
+    // cost nothing while the user is idle or typing.
     d->typingTimer = new QTimer(this);
-    connect
-    (
-        d->typingTimer,
-        SIGNAL(timeout()),
-        this,
-        SLOT(checkIfTypingPaused())
-    );
-    d->typingTimer->start(1000);
+    d->typingTimer->setSingleShot(true);
+    d->typingTimer->setInterval(1000);
+    connect(d->typingTimer, SIGNAL(timeout()), this, SLOT(checkIfTypingPaused()));
 
     d->typingPausedScaledSignalSent = true;
     d->scaledTypingHasPaused = true;
 
     d->scaledTypingTimer = new QTimer(this);
-    connect
-    (
-        d->scaledTypingTimer,
-        SIGNAL(timeout()),
-        this,
-        SLOT(checkIfTypingPausedScaled())
-    );
-    d->scaledTypingTimer->start(1000);
+    d->scaledTypingTimer->setSingleShot(true);
+    connect(d->scaledTypingTimer, SIGNAL(timeout()), this, SLOT(checkIfTypingPausedScaled()));
 
     d->parseGeneration = 0;
     d->handledParseGeneration = 0;
     d->parsePending = false;
     d->parseTimer = new QTimer(this);
     d->parseTimer->setSingleShot(true);
-    d->parseTimer->setInterval(75);
+
+    // Parsing runs on a worker thread and applying its result only
+    // re-highlights blocks whose formatting changed, so the parse can follow
+    // a short pause in typing.  Until then, edited lines keep their existing
+    // (shifted) formatting.
+    d->parseTimer->setInterval(150);
     connect(d->parseTimer, &QTimer::timeout, this, [d]() {
         d->startDocumentParse();
     });
@@ -710,6 +709,8 @@ void MarkdownEditor::setPlainText(const QString &text)
     Q_D(MarkdownEditor);
 
     d->parseTimer->stop();
+    d->typingTimer->stop();
+    d->scaledTypingTimer->stop();
     ++d->parseGeneration;
     d->parsePending = false;
     d->parseText(text);
@@ -721,6 +722,10 @@ void MarkdownEditor::setPlainText(const QString &text)
     QPlainTextEdit::setPlainText(text);
     d->blindDraftNavigationAllowed = blindDraftNavigationAllowed;
     d->loadingDocument = false;
+
+    // Every block was just highlighted from the new AST; this only clears
+    // any refresh work left over from the previous document.
+    d->highlighter->refreshAfterParse();
 
     if (d->blindDraftModeEnabled) {
         d->commitBlindDraftLine();
@@ -2001,14 +2006,16 @@ void MarkdownEditor::decreaseFontSize()
 void MarkdownEditor::onContentsChanged(int position, int charsRemoved, int charsAdded)
 {
     Q_D(MarkdownEditor);
-    
-    Q_UNUSED(position)
-    Q_UNUSED(charsRemoved)
-    Q_UNUSED(charsAdded)
 
     if (d->loadingDocument) {
         return;
     }
+
+    // This slot is connected before the highlighter's, so the highlighter
+    // sees the AST as stale and works from its shifted cached formatting
+    // instead of looking up nodes by now-outdated line numbers.
+    d->textDocument->markMarkdownAstStale();
+    d->highlighter->adjustForEdit(position, charsRemoved, charsAdded);
 
     if (d->blindDraftModeEnabled) {
         if (!d->blindDraftUndoRedoInProgress) {
@@ -2039,6 +2046,13 @@ void MarkdownEditor::onContentsChanged(int position, int charsRemoved, int chars
         d->typingPausedScaledSignalSent = false;
         emit typingResumed();
     }
+
+    d->typingTimer->start();
+
+    // Scale the pause (used for the live preview) with the document size,
+    // but never react to less than ~a third of a second of inactivity.
+    const int interval = qBound(350, (document()->characterCount() / 30000) * 20, 1000);
+    d->scaledTypingTimer->start(interval);
 }
 
 void MarkdownEditor::onSelectionChanged()
@@ -2161,39 +2175,24 @@ void MarkdownEditor::checkIfTypingPaused()
 {
     Q_D(MarkdownEditor);
 
-    if (!d->loadingDocument && d->typingHasPaused && !d->typingPausedSignalSent) {
+    d->typingHasPaused = true;
+
+    if (!d->loadingDocument && !d->typingPausedSignalSent) {
         d->typingPausedSignalSent = true;
         emit typingPaused();
     }
-
-    d->typingTimer->stop();
-    d->typingTimer->start(1000);
-
-    d->typingHasPaused = true;
 }
 
 void MarkdownEditor::checkIfTypingPausedScaled()
 {
     Q_D(MarkdownEditor);
-    
-    if (!d->loadingDocument && d->scaledTypingHasPaused && !d->typingPausedScaledSignalSent) {
+
+    d->scaledTypingHasPaused = true;
+
+    if (!d->loadingDocument && !d->typingPausedScaledSignalSent) {
         d->typingPausedScaledSignalSent = true;
         emit typingPausedScaled();
     }
-
-    // Scale timer interval based on document size.
-    int interval = (document()->characterCount() / 30000) * 20;
-
-    if (interval > 1000) {
-        interval = 1000;
-    } else if (interval < 20) {
-        interval = 20;
-    }
-
-    d->scaledTypingTimer->stop();
-    d->scaledTypingTimer->start(interval);
-
-    d->scaledTypingHasPaused = true;
 }
 
 void MarkdownEditor::onCursorPositionChanged()
@@ -2222,8 +2221,13 @@ void MarkdownEditor::onCursorPositionChanged()
     d->cursorBlinkTimer->stop();
     d->cursorBlinkTimer->start();
 
-    // Update widget to ensure cursor is drawn.
-    update();
+    // Repaint only where the caret was and where it is now.  The whole of
+    // both blocks is included since their line break markers depend on
+    // whether the caret sits at the end of the block.
+    const QRect cursorArea = d->cursorAreaRect();
+    viewport()->update(d->lastCursorArea);
+    viewport()->update(cursorArea);
+    d->lastCursorArea = cursorArea;
 
     emit cursorPositionChanged(this->textCursor().position());
 }
@@ -2329,7 +2333,22 @@ void MarkdownEditorPrivate::toggleCursorBlink()
     Q_Q(MarkdownEditor);
     
     this->textCursorVisible = !this->textCursorVisible;
-    q->update();
+    q->viewport()->update(q->cursorRect().adjusted(-1, -1, 1, 1));
+}
+
+QRect MarkdownEditorPrivate::cursorAreaRect() const
+{
+    Q_Q(const MarkdownEditor);
+
+    QRect area = q->cursorRect().adjusted(-1, -1, 1, 1);
+    const QTextBlock block = q->textCursor().block();
+
+    if (block.isValid() && block.isVisible()) {
+        const QRectF blockRect = q->blockBoundingGeometry(block).translated(q->contentOffset());
+        area |= QRect(0, qFloor(blockRect.top()), q->viewport()->width(), qCeil(blockRect.height()) + 1);
+    }
+
+    return area;
 }
 
 void MarkdownEditorPrivate::scheduleDocumentParse()
@@ -2367,13 +2386,15 @@ void MarkdownEditorPrivate::finishDocumentParse()
 
     if (result.generation == parseGeneration) {
         static_cast<MarkdownDocument *>(q->document())->setMarkdownAST(result.ast);
-        highlighter->rehighlight();
+        highlighter->refreshAfterParse();
         emit q->markdownAstChanged();
     } else {
         delete result.ast;
     }
 
-    if (parsePending) {
+    // If the debounce elapsed while this parse was running, catch up now;
+    // otherwise let the pending debounce decide when to parse again.
+    if (parsePending && !parseTimer->isActive()) {
         parseTimer->start(0);
     }
 }

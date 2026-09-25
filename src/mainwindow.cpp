@@ -189,6 +189,17 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
     } else {
         documentManager->createUntitled();
     }
+
+    // Show the editor first; start QtWebEngine on the next event loop turn.
+    if (appSettings->htmlPreviewVisible()) {
+        QTimer::singleShot(0, this, [this]() {
+            if (!htmlPreview && appSettings->htmlPreviewVisible() && !editor->blindDraftModeEnabled()) {
+                ensureHtmlPreview();
+                htmlPreview->updatePreview();
+                adjustEditor();
+            }
+        });
+    }
 }
 
 MainWindow::~MainWindow()
@@ -356,7 +367,6 @@ void MainWindow::toggleHtmlPreview(bool checked)
 {
     if (checked && !htmlPreview) {
         ensureHtmlPreview();
-        applyTheme();
     }
 
     if (htmlPreview) {
@@ -804,14 +814,15 @@ void MainWindow::setupActions()
 
     auto reopenLastAction = appAction(AppActions::ReopenLastClosed);
 
+    // Loading the library reads the whole file history from the settings and
+    // checks that each file still exists, so only do it once.
+    const BookmarkList recentFiles = Library().recentFiles();
+
     // Get open recent files actions.
     for (int i = AppActions::OpenMostRecent; i <= AppActions::OpenLeastRecent; i++) {
         int index = i - AppActions::OpenMostRecent;
         bool enableReopenLast = false;
         auto action = appAction((AppActions::ActionType)i);
-
-        Library library;
-        BookmarkList recentFiles = library.recentFiles();
 
         if (recentFiles.length() > index) {
             auto filePath = recentFiles.at(index).filePath();
@@ -1066,11 +1077,9 @@ void MainWindow::setupGui()
 
     setCentralWidget(splitter);
 
-    // QtWebEngine is by far the heaviest startup dependency. Do not create it
-    // unless Live Preview was explicitly left enabled or the user turns it on.
-    if (appSettings->htmlPreviewVisible()) {
-        ensureHtmlPreview();
-    }
+    // QtWebEngine is by far the heaviest startup dependency.  It is created
+    // only once the user turns Live Preview on, or, if it was left on, after
+    // the window and document are on screen (see the constructor).
 }
 
 void MainWindow::ensureHtmlPreview()
@@ -1098,6 +1107,10 @@ void MainWindow::ensureHtmlPreview()
     const int sidebarWidth = sidebar->isVisible() ? sidebar->width() : 0;
     const int otherWidth = qMax(1, (width() - sidebarWidth) / 2);
     splitter->setSizes({sidebarWidth, otherWidth, otherWidth});
+
+    if (!previewStyleSheet.isNull()) {
+        htmlPreview->setStyleSheet(previewStyleSheet);
+    }
 }
 
 void MainWindow::setupMenuBar()
@@ -1562,14 +1575,12 @@ void MainWindow::applyTheme()
         qApp->style()->polish(this);
     }
 
-    if (htmlPreview) {
-        styleSheet = styler.htmlPreviewStyleSheet();
+    previewStyleSheet = styler.htmlPreviewStyleSheet();
 
-        if (styleSheet.isNull()) {
-            qCritical() << "Invalid HTML preview style sheet provided.";
-        } else {
-            htmlPreview->setStyleSheet(styleSheet);
-        }
+    if (previewStyleSheet.isNull()) {
+        qCritical() << "Invalid HTML preview style sheet provided.";
+    } else if (htmlPreview) {
+        htmlPreview->setStyleSheet(previewStyleSheet);
     }
 
     adjustEditor();

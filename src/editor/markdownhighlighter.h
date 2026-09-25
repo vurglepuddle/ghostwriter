@@ -82,6 +82,32 @@ public:
      */
     void setFont(const QString &fontFamily, const double fontSize);
 
+    /**
+     * Must be called for every text edit before this highlighter processes
+     * the document's contentsChange() signal.  Shifts the cached formatting
+     * (and spelling errors) of the edited blocks to follow the edit, so they
+     * can be displayed without a current AST, and flags them for re-checking
+     * once a new AST is available.
+     */
+    void adjustForEdit(int position, int charsRemoved, int charsAdded);
+
+    /**
+     * Call after installing an AST that matches the document text.
+     * Re-highlights only the blocks whose formatting actually changed:
+     * those edited since the last refresh and any whose Markdown context
+     * changed as a result.  Visible blocks are handled first, and the work
+     * is spread across event loop iterations in small time slices.
+     */
+    void refreshAfterParse();
+
+    /**
+     * Color of the underline drawn beneath misspelled words, which are
+     * stored per block by the SpellCheckDecorator.  An invalid color
+     * disables the underline.
+     */
+    QColor spellingErrorColor() const;
+    void setSpellingErrorColor(const QColor &color);
+
 signals:
     /**
      * FOR INTERNAL USE ONLY

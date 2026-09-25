@@ -5,172 +5,178 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-class LivePreview extends React.Component {
-    constructor(props) {
-        super(props);
+// Live preview renderer.
+//
+// Each update parses the new HTML with the browser's own parser and then
+// replaces only the top-level blocks that differ from what is displayed,
+// so typing in one paragraph re-renders one paragraph rather than the whole
+// document.  MathJax is loaded on demand, only when the current exporter
+// supports math.
 
-        this.initializeWebChannel = this.initializeWebChannel.bind(this);
-        this.loadStyleSheet = this.loadStyleSheet.bind(this);
-        this.updateLivePreview = this.updateLivePreview.bind(this);
-        this.setMathEnabled = this.setMathEnabled.bind(this);
-        this.scrollToChange = this.scrollToChange.bind(this);
+(function () {
+    'use strict';
 
-        this.mutationObserver = new MutationObserver(
-            this.scrollToChange
-        );
+    var root = document.getElementById('livepreviewplaceholder');
+    var lastHtml = '';
+    var mathEnabled = false;
+    var mathJaxState = 'unloaded'; // 'unloaded', 'loading' or 'ready'
+    var pendingTypeset = [];
 
-        this.scrollElement = null;
+    // Source HTML of a displayed node, remembered at insertion time because
+    // MathJax rewrites the DOM of nodes that contain math.
+    function sourceOf(node) {
+        if (node.gwSource !== undefined) {
+            return node.gwSource;
+        }
 
-        this.mutationObserver.observe(
-            document.getElementById('livepreviewplaceholder'),
-            {
-                attributes: true,
-                characterData: true,
-                childList: true,
-                subtree: true,
-                attributeOldValue: false,
-                characterDataOldValue: false
-            }
-        );
-
-        this.state = {
-            livePreviewHTML: '',
-            mathEnabled: false
-        };
-
-        new QWebChannel(qt.webChannelTransport,
-            this.initializeWebChannel
-        );
+        return (1 === node.nodeType) ? node.outerHTML : node.nodeValue;
     }
 
-    initializeWebChannel(channel) {
-        var proxy = channel.objects.previewProxy;
-
-        this.loadStyleSheet(proxy.styleSheet);
-        proxy.styleSheetChanged.connect(this.loadStyleSheet);
-
-        this.updateLivePreview(proxy.htmlContent);
-        proxy.htmlChanged.connect(this.updateLivePreview);
-
-        this.setMathEnabled(proxy.mathEnabled);
-        proxy.mathToggled.connect(this.setMathEnabled);
-    }
-
-    loadStyleSheet(css) {
+    function loadStyleSheet(css) {
         var cssElem = document.getElementById('ghostwriter_css');
 
-        if (cssElem) {
-            cssElem.textContent = css;
-        }
-        else {
+        if (!cssElem) {
             cssElem = document.createElement('style');
             cssElem.id = 'ghostwriter_css';
             cssElem.type = 'text/css';
             cssElem.media = 'all';
-            cssElem.textContent = css;
             document.head.appendChild(cssElem);
         }
+
+        cssElem.textContent = css;
     }
 
-    updateLivePreview(html) {
-        this.setState({ livePreviewHTML: html });
+    function typeset(elements) {
+        if (!mathEnabled || (0 === elements.length)) {
+            return;
+        }
 
-        // Call MathJax to update document, if the library is
-        // available and the math feature is enabled.
-        if ((typeof window.MathJax !== 'undefined')
-                && (this.state.mathEnabled)) {
-            window.MathJax.typeset();
+        if ('ready' === mathJaxState) {
+            window.MathJax.typesetPromise(elements).catch(function (error) {
+                console.error('MathJax typesetting failed: ' + error);
+            });
+            return;
+        }
+
+        pendingTypeset = pendingTypeset.concat(elements);
+
+        if ('unloaded' === mathJaxState) {
+            mathJaxState = 'loading';
+
+            // window.MathJax holds the configuration from preview-init.js
+            // until the library replaces it with its API.
+            var config = window.MathJax || {};
+            config.startup = config.startup || {};
+            config.startup.typeset = false;
+            config.startup.ready = function () {
+                window.MathJax.startup.defaultReady();
+                mathJaxState = 'ready';
+
+                var elements = pendingTypeset.filter(function (element) {
+                    return element.isConnected;
+                });
+
+                pendingTypeset = [];
+                typeset(elements);
+            };
+            window.MathJax = config;
+
+            var script = document.createElement('script');
+            script.src = 'qrc:3rdparty/MathJax/bin/tex-svg-full.js';
+            document.head.appendChild(script);
         }
     }
 
-    setMathEnabled(enabled) {
-        this.setState({ mathEnabled: enabled });
+    function updateLivePreview(html) {
+        lastHtml = html;
 
-        // Clear out the old MathJax data in the DOM, otherwise
-        // React will not properly diff the old and new
-        // content where equations appear.
-        var previousHtml = this.state.livePreviewHTML;
-        this.updateLivePreview('');
+        var template = document.createElement('template');
+        template.innerHTML = html;
 
-        // Restore the old content without the math.
-        this.updateLivePreview(previousHtml);
-    }
+        var newNodes = Array.prototype.slice.call(template.content.childNodes);
+        var oldNodes = Array.prototype.slice.call(root.childNodes);
+        var newSources = newNodes.map(function (node) {
+            return (1 === node.nodeType) ? node.outerHTML : node.nodeValue;
+        });
 
-    getLivePreviewContent() {
-        return this.state.livePreviewHTML;
-    }
+        // Skip the unchanged blocks at the beginning and end.
+        var start = 0;
 
-    scrollToChange(mutations) {
-        var scrollToNode = null;
+        while ((start < oldNodes.length)
+                && (start < newNodes.length)
+                && (sourceOf(oldNodes[start]) === newSources[start])) {
+            start++;
+        }
 
-        for (var i = 0; i < mutations.length; i++) {
-            var mutation = mutations[0];
+        var oldEnd = oldNodes.length - 1;
+        var newEnd = newNodes.length - 1;
 
-            if ('attributes' === mutation.type) {
-                scrollToNode = mutation.target;
-            }
-            else if ('characterData' === mutation.type) {
-                scrollToNode = mutation.target.parentNode;
-            }
-            else if ('childList' === mutation.type) {
-                if (mutation.addedNodes.length > 0) {
-                    for (var j = 0; j < mutation.addedNodes.length; j++) {
-                        if (1 === mutation.addedNodes[j].nodeType) {
-                            scrollToNode = mutation.addedNodes[j];
-                            break;
-                        }
-                    }
-                }
-                else if (mutation.removedNodes.length > 0) {
-                    scrollToNode = mutation.removedNodes[0].previousSibling;
+        while ((oldEnd >= start)
+                && (newEnd >= start)
+                && (sourceOf(oldNodes[oldEnd]) === newSources[newEnd])) {
+            oldEnd--;
+            newEnd--;
+        }
 
-                    // If there is no previous sibling to the deleted nodes,
-                    // then go to the parent node.
-                    if (!scrollToNode) {
-                        scrollToNode = mutation.target;
-                    }
-                }
-            }
-            else {
-                console.error('Unsupported mutation type from MutationObserver: '
-                    + mutation.type);
+        var reference = (oldEnd + 1 < oldNodes.length) ? oldNodes[oldEnd + 1] : null;
+
+        for (var i = start; i <= oldEnd; i++) {
+            root.removeChild(oldNodes[i]);
+        }
+
+        var inserted = [];
+
+        for (var j = start; j <= newEnd; j++) {
+            var node = newNodes[j];
+            node.gwSource = newSources[j];
+            root.insertBefore(node, reference);
+
+            if (1 === node.nodeType) {
+                inserted.push(node);
             }
         }
 
-        if (scrollToNode
-                && (typeof scrollToNode.scrollIntoView !== 'undefined')) {
-            scrollToNode.scrollIntoView();
-        }
-    }
+        // Bring the change into view, as the user is presumably looking at it
+        // in the editor, but don't move if it is already visible.
+        var changed = (inserted.length > 0)
+            ? inserted[0]
+            : ((start > 0) ? oldNodes[start - 1] : null);
 
-    render() {
-        return React.createElement('div', null,
-            HTMLReactParser(this.getLivePreviewContent()));
-    }
-}
-
-class ErrorBoundary extends React.Component {
-    constructor(props) {
-        super(props);
-        this.state = { hasError: false };
-    }
-
-    componentDidCatch(error, info) {
-        this.setState({ hasError: true });
-    }
-
-    render() {
-        if (this.state.hasError) {
-            this.setState({ hasError: false });
-            return '<p>Game over!  Insert coin.</p>';
+        while (changed && (1 !== changed.nodeType)) {
+            changed = changed.previousSibling;
         }
 
-        return this.props.children;
-    }
-}
+        if (changed && ((oldEnd >= start) || (newEnd >= start))) {
+            changed.scrollIntoView({ block: 'nearest' });
+        }
 
-ReactDOM.render(
-    React.createElement(ErrorBoundary,
-        null,
-        React.createElement(LivePreview, null)),
-    document.getElementById('livepreviewplaceholder'));
+        typeset(inserted);
+    }
+
+    function setMathEnabled(enabled) {
+        if (mathEnabled === enabled) {
+            return;
+        }
+
+        mathEnabled = enabled;
+
+        // Re-render everything so that math is either typeset or shown as
+        // its source again.
+        var html = lastHtml;
+        root.textContent = '';
+        updateLivePreview(html);
+    }
+
+    new QWebChannel(qt.webChannelTransport, function (channel) {
+        var proxy = channel.objects.previewProxy;
+
+        loadStyleSheet(proxy.styleSheet);
+        proxy.styleSheetChanged.connect(loadStyleSheet);
+
+        mathEnabled = proxy.mathEnabled;
+        root.textContent = '';
+        updateLivePreview(proxy.htmlContent);
+        proxy.htmlChanged.connect(updateLivePreview);
+        proxy.mathToggled.connect(setMathEnabled);
+    });
+})();

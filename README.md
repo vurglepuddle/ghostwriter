@@ -1,137 +1,95 @@
-# <img src="./resources/icons/sc-apps-ghostwriter.svg" align="left" width="32" style="padding-right:5px"> ghostwriter
+# <img src="./resources/icons/ghostwriter.png" align="left" width="44" style="padding-right:5px"> ghostwriter
 
-*ghostwriter* is a Windows and Linux text editor for Markdown, which is a plain text markup format created by John Gruber. For more information about Markdown, please visit John Gruber’s website at <http://www.daringfireball.net>.  *ghostwriter* provides a relaxing, distraction-free writing environment, whether your masterpiece be that next blog post, your school paper, or your NaNoWriMo novel.  For a tour of its features, please visit the [*ghostwriter* project site](https://ghostwriter.kde.org).
+This is a personal fork of [*ghostwriter*](https://invent.kde.org/office/ghostwriter), the distraction-free Markdown editor from KDE. It is tuned for writing long prose on Windows: typing stays instant in large documents, the app opens quickly, and there are a few writing tools the original doesn't have.
 
-## Screenshots
+For general help with *ghostwriter* itself, see the [quick reference guide](https://ghostwriter.kde.org/documentation/) on the original project's site.
 
-You can view screenshots of the application at [*ghostwriter's* project site](https://ghostwriter.kde.org).
+## What this fork changes
 
-## Documentation
+### Speed
 
-A quick reference guide is available [here](https://ghostwriter.kde.org/documentation/).
+* **Typing is instant, even in big documents.** Typing, deleting and pasting take a few milliseconds no matter how long the document is. In a 70 KB document, typing used to fall seconds behind. The editor now reformats only the lines that actually changed, and parses Markdown in the background.
+* **The app opens fast.** The window appears in about 0.6 seconds instead of about 1 second (measured on a Windows machine with a 43 KB document), and your last document shows up right after. Anything the document doesn't need to be shown, like the spell checker's dictionaries, the folder view and Live Preview, loads once the document is on screen.
+* **Files are loaded once.** Opening a file from another folder, including the last file at startup, used to load it twice.
+* **Spell checking stays out of the way.** It runs only when you pause typing, checks only the paragraphs that changed, and remembers words it has already checked. It picks the dictionary by the writing system of the text (Latin, Cyrillic and so on), and only guesses the language when you have dictionaries for several languages that share one.
+* **Statistics and the outline don't slow you down.** Word counts are updated for changed paragraphs once you pause, and the outline isn't rebuilt while it's hidden.
+* **Live Preview costs nothing until you use it.** Its browser engine only starts when Preview is turned on. The preview then updates only the parts of the page that changed, a moment after you stop typing, and loads math support only when the selected Markdown processor supports math.
+* **External Markdown processors are found when needed.** Pandoc, MultiMarkdown and cmark are looked for the first time you need them, not every time the app starts.
 
-## Installation
+### New features
 
-### Windows
+* **Blind Draft Mode** (View menu, or `Ctrl+Shift+B`). While it's on, you only see and edit the line you are writing. Everything before it is locked, so you keep moving forward instead of rewriting. Turn it off to see and edit the whole document again.
+* **Safer Live Preview.** Images and media from the internet are blocked by default. A bar at the top of the preview lets you load them for the current document when you want them. Scripts inside documents never run, and the preview uses a private browser profile that doesn't keep anything.
 
-An installer will be forthcoming at the [KDE binary factory](https://binary-factory.kde.org/), along with a nightly build.
+### Fixes
 
-### Linux
+* Opening Markdown files from Windows Explorer with "Open with" works.
+* The Windows app has its own icon.
+* The folder view follows the light or dark theme.
+* Resizing the window no longer lags, and the sidebar no longer flashes white when it hides or reappears.
 
-Versions of *ghostwriter* 2.2.0 and above are provided with KDE Gears releases and should be available with your Linux distribution.  For example, on Ubuntu, you can enter the following commands from your terminal:
+The full list is in [CHANGELOG.md](CHANGELOG.md).
 
-    $ sudo apt update
-    $ sudo apt install ghostwriter
+## Getting the app
 
-On Fedora, enter the following commands instead:
+There are no ready-made downloads of this fork. Build it from source as described below.
 
-    $ sudo dnf install ghostwriter
+If you want the original *ghostwriter* instead, KDE packages it for Linux, and there are more options on the [original project's site](https://ghostwriter.kde.org).
 
-You may also find packages on the author's personal repository locations version 2.1.6 in case your GNU/Linux distribution is behind.  If you are running Ubuntu or one of its derivatives (Linux Mint, Xubuntu, etc.), open a terminal, and enter the following commands:
+## Building on Windows
 
-    $ sudo add-apt-repository ppa:wereturtle/ppa
-    $ sudo apt update
-    $ sudo apt install ghostwriter
+This fork is built on Windows with Visual Studio 2022, Qt 6.11 and KDE Frameworks 6.29, with Qt and the Frameworks installed through [KDE Craft](https://community.kde.org/Craft).
 
-Fedora users can install older version of *ghostwriter* from [Copr](https://copr.fedorainfracloud.org/) by opening a terminal and entering the following commands:
+1. Install Visual Studio 2022 with the "Desktop development with C++" workload.
+2. Install KDE Craft (these steps assume it's in `C:\CraftRoot`). Use it to install:
+   * Qt 6, including Qt SVG, Qt WebEngine and Qt WebChannel
+   * the KDE Frameworks CoreAddons, ConfigWidgets, WidgetsAddons, XmlGui and Sonnet
+   * Extra CMake Modules
+3. Open an "x64 Native Tools Command Prompt for VS 2022", add Craft's tools to your `PATH`, and build:
 
-    $ sudo dnf copr enable wereturtle/stable
-    $ sudo dnf install ghostwriter
+        set PATH=C:\CraftRoot\bin;C:\CraftRoot\dev-utils\bin;%PATH%
+        cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/CraftRoot -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+        cmake --build build-release
 
-Finally, you may follow the build instructions below to install on Linux with the latest source code.
+   Keep the two `cl` settings. Without them, CMake picks Craft's own compiler, and the build fails.
+4. The app is `build-release\bin\ghostwriter.exe`. To run it, `C:\CraftRoot\bin` needs to be on your `PATH`, and a file named `qt.conf` next to the exe tells Qt where Craft keeps its plugins:
 
-### MacOS
+        [Paths]
+        Prefix = C:/CraftRoot
+        Binaries = C:/CraftRoot/bin
+        Libraries = C:/CraftRoot/lib
+        LibraryExecutables = C:/CraftRoot/bin
+        Plugins = C:/CraftRoot/plugins
+        QmlImports = C:/CraftRoot/qml
+        Data = C:/CraftRoot/bin
+        Translations = C:/CraftRoot/translations
 
-An installer is planned in the future and will be hosted at the [KDE binary factory](https://binary-factory.kde.org/), along with a nightly build.  If you have any expertise to offer, please consider helping with a [Craft configuration](https://community.kde.org/Craft).
+5. To run the tests, use `ctest --test-dir build-release`.
 
-## Build
+### Other systems
 
-If you wish to build from the source code, you will need Qt 6, available from <http://www.qt.io/> if you are on Windows, or in your Linux distribution's repository. If you are on MacOS you will need the latest Qt 6 from brew.
+This fork doesn't add any dependencies, so the [original build instructions](https://invent.kde.org/office/ghostwriter) for Linux, macOS and FreeBSD should still work. They haven't been tested with this fork.
 
-This documentation assumes you already have the source code unzipped in a folder.
+## Command line
 
-### Windows
+You can open a file straight from a terminal:
 
-Building on Windows requires Visual Studio.  General instructions for building KDE applications in Windows are available [here](https://community.kde.org/Get_Involved/development/Windows).
+    ghostwriter myfile.md
 
-**IMPORTANT**: If compiling against Qt 6, note that having OpenGL components (in this case, QWebEngineView) will force the entire window to be rendered in OpenGL.  This triggers a bug in Windows in full screen mode where menus can no longer be displayed, such as the menu bar menus or popup menus.
+If the file doesn't exist yet, *ghostwriter* creates it.
 
-This issue was not present in Qt 5, since ANGLE was available to bypass the default OpenGL implementation and use DirectX.  With ANGLE having been removed from Qt 6 and the documented solutions not entirely working, you will have to use software rendering instead if you wish to work in full screen mode.  Please see the section below for command line arguments that will disable GPU acceleration.
+To turn off GPU acceleration, add `--disable-gpu`:
 
-Obviously, the best option is to continue using Qt 5 on Windows for as long as possible.
+    ghostwriter --disable-gpu
 
-### Linux
+This can help on Windows if menus don't show up in full screen mode while Live Preview is on.
 
-Before proceeding, ensure that you have the necessary packages installed for Qt 6 and KDE Frameworks.
+## Other Markdown processors
 
-For Debian or Ubuntu distributions:
+*ghostwriter* has the cmark-gfm processor built in. It can also use Pandoc, MultiMarkdown or cmark if you install them and make sure they are on your `PATH`. They then show up as options for Live Preview and exporting.
 
-    $ sudo apt install g++ qtbase5-dev libqt5svg5-dev qtmultimedia5-dev qtwebengine5-dev libqt5concurrent5 qttools5-dev-tools qttools5-dev libkf5coreaddons-dev libkf5xmlgui-dev libkf5configwidgets-dev libkf5sonnet-dev libkf5doctools5 libkf5doctools-dev cmake extra-cmake-modules
+## Credits and license
 
-For Fedora:
+*ghostwriter* was created by Megan Conkle (wereturtle) and is developed by KDE. This fork is built on their work.
 
-    $ sudo dnf install qt-devel qt5-qtbase-devel qt5-qtsvg-devel qt5-qtmultimedia-devel qt5-qtwebengine-devel qt5-linguist kf5-kcoreaddons-devel kf5-kwidgetsaddons-devel kf5-kconfigwidgets-devel kf5-kxmlgui-devel kf5-sonnet-devel kf5-kdoctools kf5-kdoctools-devel cmake extra-cmake-modules
-
-For other Linux flavors, the list will be similar; `cmake` will tell you if you are missing anything.
-
-Next, open a terminal window, and enter the following commands:
-
-    $ cd <your_ghostwriter_folder_location>
-    $ mkdir build
-    $ cd build
-    $ cmake ..
-    $ make
-    # make install
-
-### MacOS
-
-Please consult the [KDE development guide](https://community.kde.org/Get_Involved/development/Mac) on how to build KDE applications for MacOS in general.
-
-### FreeBSD
-
-Prerequisites
-
-* Git (`git` or `git-lite`)
-
-Install the dependencies
-
-    sudo pkg install cmake ninja kf6-extra-cmake-modules kf6-kconfigwidgets kf6-kcoreaddons kf6-kdoctools kf6-kwidgetsaddons kf6-kxmlgui kf6-sonnet qt6-base qt6-svg qt6-tools qt6-webengine
-
-Get the sources
-
-    git clone https://invent.kde.org/office/ghostwriter
-
-Build
-
-    $ cd ghostwriter
-    $ mkdir build
-    $ cd build
-    $ cmake ..
-    $ make
-    $ sudo make install
-
-## Command Line Usage
-
-For terminal users, *ghostwriter* can be run from the command line.  In your terminal window, simply type the following:
-
-    $ ghostwriter myfile.md
-
-where `myfile.md` is the path to your Markdown text file.
-
-An option to disable GPU acceleration `--disable-gpu` is also available.  Simply type the following:
-
-    $ ghostwriter --disable-gpu
-
-A scenario where you may consider using software rendering would be if compiling against Qt 6 on Windows, and running the application in full screen mode.  See the documented bug under the Windows build instructions above for further details.  Note that the application may inconsistently launch on Windows with GPU acceleration disabled, and it may take several attempts before you can start it successfully.
-
-## Additional Markdown Processors
-
-*ghostwriter* has built-in support for the cmark-gfm processor.  However, it also can auto-detect Pandoc, MultiMarkdown, or cmark processors.  To use any or all of the latter three, simply install them and ensure that their installation locations are added to your system's `PATH` environment variable.  *ghostwriter* will auto-detect their installation on startup, and give you live HTML preview and export options accordingly.
-
-## Contribute
-
-Please read the [contributing guide](https://ghostwriter.kde.org/contribute/) on how to contribute.  Your help would be greatly appreciated!
-
-## Licensing
-
-The source code for *ghostwriter* is licensed under the [GNU General Public License Version 3](http://www.gnu.org/licenses/gpl.html).  However, various icons and third-party FOSS code (i.e., cmark-gfm, MathJax, etc.) have different licenses compatible with GPLv3.  Please read the COPYING or LICENSE files in the respective folders for the different licenses.
+The source code is licensed under the [GNU General Public License version 3](http://www.gnu.org/licenses/gpl.html). Some icons and third-party code (such as cmark-gfm and MathJax) use other licenses that are compatible with it. See the COPYING and LICENSE files in the respective folders for details.

@@ -46,6 +46,15 @@ public:
      */
     QColor errorColor() const;
 
+    /**
+     * Loads the spell checker, which is not done on construction since
+     * Sonnet loads every installed dictionary up front, taking a good
+     * fraction of a second.  Call this once the editor is on screen.
+     * Checking waits until then, but anything else that needs the spell
+     * checker sooner loads it on demand.
+     */
+    void loadSpellChecker();
+
 public slots:
     /**
      * Updates internal state on spell check configuration change.

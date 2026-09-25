@@ -83,6 +83,7 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
     sidebarHiddenForResize = false;
     htmlPreviewVisibleBeforeBlindDraft = false;
     documentLoadAwaitingStatistics = false;
+    startupFinished = false;
     htmlPreview = nullptr;
     appSettings = AppSettings::instance();
 
@@ -141,7 +142,10 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
         documentStats->scheduleUpdate();
         refreshRecentFiles();
 
-        folderViewWidget->reloadFolderViewFromPath(documentManager->document()->filePath(), appSettings->folderViewShowAllFilesEnabled());
+        // While starting up, this waits until the document is on screen.
+        if (startupFinished) {
+            folderViewWidget->reloadFolderViewFromPath(documentManager->document()->filePath(), appSettings->folderViewShowAllFilesEnabled());
+        }
     });
 
     connect(documentManager, &DocumentManager::documentClosed, documentManager, [this]() {
@@ -179,8 +183,9 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
     applyTheme();
     adjustEditor();
 
-    // Show the theme right away before loading any files.
-    qApp->processEvents();
+    // Show the theme right away before loading any files, leaving input
+    // queued, since the empty document is about to be replaced.
+    qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // Load file from command line or last session if valid, otherwise create
     // an untitled document.
@@ -190,16 +195,28 @@ MainWindow::MainWindow(const QString &filePath, QWidget *parent)
         documentManager->createUntitled();
     }
 
-    // Show the editor first; start QtWebEngine on the next event loop turn.
-    if (appSettings->htmlPreviewVisible()) {
-        QTimer::singleShot(0, this, [this]() {
-            if (!htmlPreview && appSettings->htmlPreviewVisible() && !editor->blindDraftModeEnabled()) {
-                ensureHtmlPreview();
-                htmlPreview->updatePreview();
-                adjustEditor();
-            }
-        });
+    // Show the document, then load everything else it does not need.
+    qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+    QTimer::singleShot(0, this, &MainWindow::finishStartup);
+}
+
+void MainWindow::finishStartup()
+{
+    startupFinished = true;
+
+    folderViewWidget->reloadFolderViewFromPath(documentManager->document()->filePath(), appSettings->folderViewShowAllFilesEnabled());
+
+    // QtWebEngine is the heaviest thing to start, so Live Preview comes
+    // after the editor.
+    if (!htmlPreview && appSettings->htmlPreviewVisible() && !editor->blindDraftModeEnabled()) {
+        ensureHtmlPreview();
+        htmlPreview->updatePreview();
+        adjustEditor();
     }
+
+    // Loading the spell checker takes a while, so paint the above first.
+    qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+    spelling->loadSpellChecker();
 }
 
 MainWindow::~MainWindow()
@@ -1079,7 +1096,7 @@ void MainWindow::setupGui()
 
     // QtWebEngine is by far the heaviest startup dependency.  It is created
     // only once the user turns Live Preview on, or, if it was left on, after
-    // the window and document are on screen (see the constructor).
+    // the window and document are on screen (see finishStartup()).
 }
 
 void MainWindow::ensureHtmlPreview()

@@ -42,6 +42,10 @@ public:
     QFileSystemModel *folderModel;
     bool fileSelectionInProgress = false;
 
+    // Set while the view itself selects the open document's file, which must
+    // not be mistaken for the user choosing it (and open it a second time).
+    bool selectingOpenFile = false;
+
     /**
      * Loads the folder view from the given path.
      * See doc on FolderViewWidget::reloadFolderViewFromPath for more details.
@@ -163,8 +167,10 @@ void FolderViewWidgetPrivate::loadView(const QString &path, bool showAllFiles)
         fileSelected = library.lastOpened().filePath();
     }
 
+    selectingOpenFile = true;
     q->selectionModel()->setCurrentIndex(folderModel->index(fileSelected), QItemSelectionModel::SelectCurrent);
-    
+    selectingOpenFile = false;
+
     // Hide unnecessary UI elements
     q->setHeaderHidden(true);
     q->hideColumn(1); // Size
@@ -181,6 +187,10 @@ void FolderViewWidgetPrivate::loadView(const QString &path, bool showAllFiles)
 void FolderViewWidgetPrivate::onFolderViewItemSelectionChanged(const QString &filePath)
 {
     Q_Q(FolderViewWidget);
+
+    if (selectingOpenFile) {
+        return;
+    }
 
     fileSelectionInProgress = true;
 

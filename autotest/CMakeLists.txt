@@ -9,6 +9,7 @@ project(unittest VERSION 1.0.0 LANGUAGES CXX)
 
 add_subdirectory(asynctextwriter)
 add_subdirectory(bookmark)
+add_subdirectory(folderview)
 add_subdirectory(library)
 add_subdirectory(markdowneditor)
 add_subdirectory(remotecontent)
